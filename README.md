@@ -1,3 +1,4 @@
+<img width="1114" height="682" alt="sss" src="https://github.com/user-attachments/assets/2d545f86-94d5-4e28-a621-5ce9239349c2" />
 # DocuAsk
 
 [![CI](https://github.com/FILIPIOAN10/docu-ask/actions/workflows/ci.yml/badge.svg)](https://github.com/FILIPIOAN10/docu-ask/actions/workflows/ci.yml)
@@ -137,3 +138,6 @@ languages; image vulnerability scanning.
 - No per-tenant isolation yet: one set of documents, shared by every API key. A single static API key list instead of signed tokens.
 - No tracing or metrics, only request-id logs.
 - The UI has no login (you type the API key) and does not use the streaming endpoint; "Delete" removes a document for real.
+
+
+<img width="1114" height="682" alt="sss" src="https://github.com/user-attachments/assets/781a91bd-a2b1-477d-841a-f60c61e454ad" />
