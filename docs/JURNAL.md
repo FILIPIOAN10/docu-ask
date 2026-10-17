@@ -847,3 +847,24 @@ accesibilitate cu cititor de ecran; autentificare reală (cheia se tastează).
   pică dacă apare `innerHTML` în ea.”
 - „Butonul «Show passages» arată ce a găsit căutarea, cu distanțe și scoruri, fără să apeleze modelul: e primul loc unde mă uit când un răspuns pare greșit.”
 - „Limite pe care le știu: nu are login (cheia se tastează) și nu folosește streaming-ul.”
+
+---
+
+## Încheiere — verificarea finală (Pasul 44) · 2026-10-17
+
+### Ce am verificat
+- **Secrete:** `.env` e ignorat de git și nu e urmărit; **0** potriviri cu șiruri de tip cheie (OpenAI `sk-`, GitHub, AWS, chei private, chei Azure cu valoare) în fișierele
+  urmărite și în **tot istoricul**; `gitleaks` pe cele 15 commit-uri existente: **no leaks found**. În repo rămân doar valorile de dezvoltare: `dev-key` și parola `docuask` a bazei locale.
+- **Date personale:** niciun nume, e-mail sau cale locală în fișierele urmărite. Adresa de e-mail a autorului apare în metadatele commit-urilor, deci e publică pe GitHub.
+- **CI:** rularea #4, pe commit-ul cu pagina (`232aa21`), verde: `test` și `image`.
+- **Stare finală:** 61 de teste, acoperire ~91 %, `ruff` curat, imagine Docker ~295 MB non-root, README cu cifrele reale.
+
+### Modificări de încheiere
+- `.env.example`: comentariul de la `MAX_DISTANCE` cu valorile măsurate (0,72) și o notă că `dev-key` e doar pentru dezvoltare locală.
+- `README.md`: în „Known limits”, cheia implicită `dev-key` (nimic n-o blochează la pornire).
+
+### Neverificat la final
+Azure OpenAI pe un endpoint real; latențe și comportament sub încărcare; PDF-uri reale complexe sau scanate; alte limbi; scanare de vulnerabilități a imaginii; OCR pentru poze.
+
+### Rămase opționale
+Tie-break după rangul vectorial în RRF (de implementat și remăsurat); rulare pe Azure; OCR.

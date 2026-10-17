@@ -136,6 +136,7 @@ languages; image vulnerability scanning.
 - Streaming cannot un-send tokens: the final `done` event carries the citation verdict and the client must honour it, and it does not report token usage.
 - The distance threshold was calibrated on the bundled documents and 28 questions; recalibrate for yours.
 - No per-tenant isolation yet: one set of documents, shared by every API key. A single static API key list instead of signed tokens.
+- The default API key is `dev-key`, a local convenience: set `API_KEYS` before exposing the service (nothing stops it from starting with the default).
 - No tracing or metrics, only request-id logs.
 - The UI has no login (you type the API key) and does not use the streaming endpoint; "Delete" removes a document for real.
 
