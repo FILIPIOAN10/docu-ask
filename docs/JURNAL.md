@@ -702,8 +702,20 @@ fixată după digest; build multi-arhitectură; oprirea frumoasă la `SIGTERM` s
 - `actionlint`: un singur avertisment de stil (`SC2034`: variabila `i` din bucla `for` a pasului de health check nu e folosită);
   workflow-ul e valid. Fișierul din repo e identic cu referința, fără tab-uri.
 
-**Neverificat:** rularea reală pe GitHub (serverele lor, cache-ul `gha`, durata, containerul de servicii) — workflow-ul n-a rulat
-niciodată acolo înainte; regula de protecție pe `main`.
+### Prima rulare reală pe GitHub (run #1, commit `4c86b85`)
+**Verde din prima**, în 2 min 3 s în total (citit din interfața GitHub și din API-ul public al repo-ului):
+| Job | Rezultat | Durată | Pașii mai lungi |
+|---|---|---|---|
+| `test` | success | 56 s | pornirea containerelor 16 s, **Tests 27 s**, **Retrieval quality gate 4 s** |
+| `image` | success | 61 s | **build 41 s**, health check al imaginii 4 s |
+
+- Pagina rulării afișează în **Summary** tabelul de evaluare (hit@1: vector 77 %, keyword 86 %, hybrid 91 %; hit@3 100 %; poarta de
+  refuz 0,918 față de 0,702), deci `$GITHUB_STEP_SUMMARY` funcționează.
+- Rezultatul pe GitHub coincide cu emulația locală (aceleași cifre de evaluare); nu a fost nevoie de niciun commit de reparare.
+- Rularea a produs și un artefact (înregistrarea build-ului Docker).
+
+**Neverificat încă:** efectul cache-ului `gha` (prima rulare a pornit fără cache; o a doua rulare ar trebui să fie mai rapidă),
+comportamentul pe un pull request și regula de protecție pe `main`.
 
 ### Capcane
 - **Primul push e testul real.** Tot ce am verificat e o emulare; un pas poate pica pe GitHub din motive pe care local nu le văd.
@@ -722,3 +734,5 @@ niciodată acolo înainte; regula de protecție pe `main`.
   fixarea pe hash.”
 - „Ce nu are încă: scanare de secrete și de vulnerabilități (gitleaks, Trivy, CodeQL), publicarea imaginii într-un registry,
   deploy automat și o matrice de versiuni de Python.”
+- „Înainte de primul push am emulat local fiecare pas al pipeline-ului (lint, teste, poarta de evaluare, imaginea), iar prima rulare
+  reală pe GitHub a fost verde, în aproximativ două minute. Dovada e în istoricul de Actions.”
