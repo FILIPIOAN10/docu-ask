@@ -667,5 +667,58 @@ fixată după digest; build multi-arhitectură; oprirea frumoasă la `SIGTERM` s
 - „Ce nu am făcut și știu că lipsește: sistem de fișiere read-only, limite de resurse, imagine de bază fixată după digest și
   scanare de vulnerabilități. Scanarea o pun în CI.”
 
-### Rămâne pentru Faza K
-CI cu GitHub Actions: testele pe Postgres, `ruff`, poarta de evaluare (`--min-hit3`) și construirea imaginii.
+---
+
+## Faza K — CI cu GitHub Actions (pașii 38–39) · 2026-10-17
+
+### Ce am făcut
+- **Pas 38 — `.github/workflows/ci.yml`.** Două joburi: `test` (lint, teste cu baza reală, acoperire, poarta de calitate a
+  căutării) și `image` (construiește imaginea și îi verifică health check-ul).
+- **Pas 39 — repo pe GitHub.** Repo-ul `FILIPIOAN10/docu-ask` exista deja, cu un commit pe fază. Rămâne **regula de protecție pe
+  `main`**, de pus după prima rulare verde.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Rulează la **push pe `main`** și la **pull request** | Fiecare schimbare e verificată înainte să conteze |
+| `permissions: contents: read` | Cel mai mic privilegiu pentru tokenul automat al workflow-ului |
+| `concurrency` cu `cancel-in-progress` | Un push nou anulează rularea veche pe aceeași ramură |
+| Postgres ca **service container** (`pgvector/pgvector:pg16`) cu `health-cmd`, iar `TEST_DATABASE_URL` îl indică | Testele rulează pe aceeași bază ca în producție și nu pornesc un al doilea container |
+| `LLM_PROVIDER: fake`, fără secrete în CI | Nicio cheie nu poate ajunge într-un log sau într-o rulare a unui fork |
+| `uv sync --frozen` | CI instalează exact `uv.lock`, ca pe laptop și în Docker |
+| `--cov-fail-under=80` | O scădere a acoperirii sub 80 % oprește build-ul |
+| **Poarta de calitate a căutării:** `evaluate --min-hit3 0.9` | Dacă un commit strică căutarea (hybrid hit@3 sub 90 %), build-ul pică; tabelul apare și în rezumatul rulării (`$GITHUB_STEP_SUMMARY`) |
+| Jobul `image` pornește după `test` (`needs`), construiește fără push și verifică `/health/live` | Prind o imagine care nu pornește, înainte de orice publicare |
+| Acțiunile fixate pe versiuni exacte | Nicio schimbare surpriză la o etichetă mobilă; ideal, în producție, pe hash de commit |
+| Regula de protecție după prima rulare verde, cu bypass pentru proprietar | Jobul `test` apare ca verificare necesară doar după ce a rulat o dată; o regulă prea strictă ar bloca push-urile directe |
+
+### Ce am verificat înainte de push (emulare locală, nu rularea de pe GitHub)
+- Toți pașii jobului `test`, într-o copie temporară și pe o bază temporară, cu aceleași variabile ca în workflow:
+  `uv.lock` sincron cu `pyproject.toml` (84 de pachete), `ruff` curat, **60 de teste trec, acoperire 90,4 %** (poarta e 80 %),
+  `alembic upgrade head` + ingestie + `evaluate --min-hit3 0.9` → cod de ieșire 0, cu raportul generat.
+- Jobul `image`, local: imaginea se construiește, pornește, iar `/health/live` răspunde după ~5 secunde.
+- Cele patru acțiuni cu versiunile din fișier există pe GitHub (`checkout@v7.0.1`, `setup-uv@v10.3.0`,
+  `setup-buildx-action@v4.4.1`, `build-push-action@v7.4.0`).
+- `actionlint`: un singur avertisment de stil (`SC2034`: variabila `i` din bucla `for` a pasului de health check nu e folosită);
+  workflow-ul e valid. Fișierul din repo e identic cu referința, fără tab-uri.
+
+**Neverificat:** rularea reală pe GitHub (serverele lor, cache-ul `gha`, durata, containerul de servicii) — workflow-ul n-a rulat
+niciodată acolo înainte; regula de protecție pe `main`.
+
+### Capcane
+- **Primul push e testul real.** Tot ce am verificat e o emulare; un pas poate pica pe GitHub din motive pe care local nu le văd.
+- **Comentariul din pasul de calitate** zice că testele golesc tabelele; în rularea locală, `ingest` a răspuns totuși `unchanged`
+  pentru toate cinci, fiindcă ultimul test lăsase deja documentele în bază. Rezultatul e același, poarta merge oricum.
+- **Etichetele acțiunilor pot fi mutate**; fixarea pe hash de commit e mai sigură (nu am făcut-o).
+- **Regula de protecție poate bloca push-urile directe** pe `main`; jobul `test` apare în lista verificărilor necesare abia după
+  prima rulare.
+
+### Cum o spun la interviu
+- „Pipeline-ul rulează la fiecare push și PR: lint, teste pe un Postgres real cu pgvector (service container), poartă de
+  acoperire la 80 %, apoi construiește imaginea și îi verifică health check-ul. Nu folosește niciun secret: modelul e fals în CI.”
+- „Am o poartă de calitate pentru căutare: după teste, rulez evaluarea pe un set de întrebări cu răspuns cunoscut, iar build-ul
+  pică dacă hit@3 al căutării hibride scade sub 90 %. Tabelul apare în rezumatul rulării.”
+- „Workflow-ul are permisiuni minime, anulează rulările depășite și își fixează acțiunile pe versiuni exacte; următorul pas ar fi
+  fixarea pe hash.”
+- „Ce nu are încă: scanare de secrete și de vulnerabilități (gitleaks, Trivy, CodeQL), publicarea imaginii într-un registry,
+  deploy automat și o matrice de versiuni de Python.”

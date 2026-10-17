@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: docuask
+          POSTGRES_PASSWORD: docuask
+          POSTGRES_DB: docuask
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U docuask"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://docuask:docuask@localhost:5432/docuask
+      TEST_DATABASE_URL: postgresql+psycopg://docuask:docuask@localhost:5432/docuask
+      LLM_PROVIDER: fake
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Tests
+        run: uv run pytest --cov=docuask --cov-report=term-missing --cov-fail-under=80
+      - name: Retrieval quality gate
+        # the tests truncate the tables, so load the sample documents again, then fail the build if hybrid hit@3 drops
+        run: |
+          uv run alembic upgrade head
+          uv run python -m docuask.cli ingest sample-docs
+          uv run python -m docuask.evaluate --min-hit3 0.9 --report eval-report.md
+          cat eval-report.md >> "$GITHUB_STEP_SUMMARY"
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: docuask:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: The image starts and answers its health check
+        run: |
+          docker run -d --name api -p 8000:8000 -e DATABASE_URL=postgresql+psycopg://x:x@localhost/x docuask:ci
+          for i in $(seq 1 20); do curl -fs http://localhost:8000/health/live && exit 0; sleep 1; done
+          docker logs api; exit 1
