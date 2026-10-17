@@ -401,3 +401,76 @@ Cifrele pe setul de 28 de întrebări (hit@k, MRR, distanțe) cu embedding real;
   deci am plătit tokeni. De aceea îl calibrez pe date, nu îl ghicesc.”
 - „Am folosit o bază separată pentru vectorii reali, fiindcă ingestia idempotentă ar fi sărit peste re-embedding și aș fi
   amestecat vectori falși cu reali.”
+
+---
+
+## Faza G — API-ul HTTP (pașii 20–23) · 2026-10-17
+
+### Ce am făcut
+- **Pas 20 — `security.py`.** Autentificare cu chei API, ca dependență FastAPI.
+- **Pas 21 — `api.py`.** Rutele: documente (încărcare, listă, ștergere), `/v1/search`, `/v1/ask`, `/v1/ask/stream` (SSE) și
+  `/health/live` + `/health/ready`.
+- **Pas 22 — `main.py`.** Aplicația: verificări la pornire, `X-Request-ID` în loguri, handler global de erori.
+- **Pas 23 — server și `curl`.** `uvicorn docuask.main:app --port 8000`, apoi toate rutele încercate cu `curl.exe`.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Cheie API în antetul `X-API-Key`, comparată cu `hmac.compare_digest`, **toate** cheile verificate | Timpul răspunsului nu scapă informații despre cheie; lista de chei (`API_KEYS=a,b`) permite rotație fără oprire |
+| Autentificarea e o dependență pe routerul `/v1` (`protected`); `/health` e separat, fără cheie | Nicio rută protejată nu uită cheia; proba de sănătate vine de la orchestrator |
+| Strat HTTP subțire: validează, autentifică, apelează serviciul, traduce excepțiile în coduri | Logica stă în `ingest.py` și `rag.py`, nu în rute (ca un controller subțire în Spring) |
+| Excepții de domeniu → 415 / 422 / 409; limită de dimensiune → 413; document lipsă → 404 | Clientul primește coduri clare, nu 500 |
+| Fișierul se citește cu **un octet peste limită** | Dacă îl primesc, e prea mare (413), iar în memorie nu țin niciodată mai mult decât limita |
+| Rute sincrone (`def`), rulate de FastAPI într-un thread pool | Munca e I/O blocant (bază, API de model); cod simplu, scalat cu replici |
+| `/v1/ask/stream` face căutarea **înainte** de flux | Sesiunea de bază se închide înainte de apelul lent la model |
+| `/health/live` nu atinge baza; `/health/ready` verifică baza, extensia `vector` și schema migrată | O pană de bază nu repornește inutil pod-uri sănătoase; un pod care pornește înainte de migrare nu primește trafic |
+| `lifespan`: verific `EMBEDDING_DIM` și construiesc clienții la pornire | **Fail fast**: o setare sau o cheie greșită oprește procesul acum, nu la prima cerere |
+| `X-Request-ID` (al clientului sau generat), păstrat într-un `ContextVar`, în răspuns și în loguri | Pot urmări o cerere prin loguri |
+| Handler global: `500 Internal error`, fără detalii către client | Detaliile (și orice secret din ele) rămân în loguri |
+| `/v1/search` ca endpoint de depanare | Când un răspuns e greșit, mă uit întâi la ce a găsit căutarea |
+
+### Ce am verificat (rezultate reale)
+- Fără cheie → `401`; `/health/ready` → `{"status":"ready"}`.
+- Încărcare `leave-policy.md` (deja ingerat din CLI) → `"status":"unchanged"`: idempotența funcționează și prin HTTP.
+- `/v1/ask` „How many days is sick leave paid?” → răspuns cu `[1]`, citare `leave-policy.md > Leave Policy > Sick leave`, `usage` 522/53.
+- `/v1/ask` „zebra giraffe safari” → `refused: true`, `reason: not_covered`, `best_distance` 0.906.
+- Document nou `notes.md` → `201`, `"status":"created"`, `chunk_count: 1`; apoi `DELETE` → `204`, a doua oară → `404`
+  `{"detail":"No such document"}`; lista a revenit la cele 5 documente.
+- Erori: `.exe` → `415 Unsupported file type '.exe'. Use .md, .txt or .pdf`; fișier gol → `422 The document has no readable text`;
+  fișier de 5.000.001 de octeți → `413 Maximum size is 5000000 bytes`.
+- `X-Request-ID: my-trace-1` trimis de mine apare în răspuns.
+- `/v1/search` hibrid „paternity leave” → primul rezultat *Parental leave*, `vector_rank` 1 și `keyword_rank` 1, scor
+  `0.0328` (= 2/61); al doilea *Annual leave*, `0.0323`.
+- `/v1/ask/stream` → o serie de evenimente `token`, apoi `done` cu citările.
+- Un `id` invalid într-un URL (`<ID>` literal, din greșeală) → `422`: validarea UUID din FastAPI.
+- Rulat de mine pe un server de test, pe o bază temporară: `/docs` → 200; întrebare prea scurtă (`"x"`) → 422; ID generat de
+  12 caractere când clientul nu trimite unul.
+
+**Neverificat încă:** autentificarea cu mai multe chei (rotația) și comportamentul sub concurență (testele din Faza H);
+`/health/ready` cu `503` (nu am provocat baza goală); streaming cu model real; sarcină și latențe.
+
+### Capcane
+- **`curl` în PowerShell** e un alias pentru `Invoke-WebRequest`: folosesc `curl.exe`.
+- **JSON în `-d '{"..."}'` se strică în PowerShell 5.1**: ghilimelele dispar și `curl` dă eroarea 3. Soluție: JSON-ul se trimite
+  prin stdin, `'{"question":"..."}' | curl.exe ... -d "@-"`.
+- **Un placeholder lăsat în comandă** (`<ID>`) n-a șters nimic (`422`), iar documentul de test a rămas în bază (6 documente
+  în loc de 5). Trebuie verificat că starea reală e cea așteptată, nu doar că „n-a dat eroare”.
+- **`[000]` la `curl`** înseamnă că fișierul de încărcat nu există (comanda care îl crea nu rulase), nu o eroare a serverului.
+- **Linia de rezumat din middleware are `[-]`** în loc de ID: `request_id_var` e resetat în `finally` înainte de `log.info`.
+  Liniile din timpul cererii (ex. `ask ...`) au ID-ul corect, la fel și antetul din răspuns. Limită cunoscută a codului din
+  ghid; remedierea ar fi logarea înainte de resetare.
+- **Streaming:** evenimentul `done` are `usage` 0/0 (calea de flux nu numără tokenii), iar ultimul `token` are text gol.
+- **Copierea din terminal poate tăia spații** la capătul de rând al unui rând lung (am văzut „daysof”, „months,unpaid” în ce
+  am lipit); în bază și în API spațiile sunt corecte, am verificat.
+
+### Cum o spun la interviu
+- „API-ul e subțire: autentifică, validează și traduce excepțiile în coduri clare (415, 422, 409, 413, 404). Logica stă în
+  servicii, nu în rute.”
+- „Cheile API se compară în timp constant și toate cheile se verifică, deci pot face rotație fără oprire. Autentificarea e o
+  dependență pe tot routerul `/v1`, deci nicio rută nu o uită.”
+- „Separ liveness de readiness: liveness nu atinge baza, ca o pană de bază să nu repornească pod-uri sănătoase; readiness
+  verifică și schema migrată, deci un pod care pornește înainte de migrare nu primește trafic.”
+- „Aplicația pică la pornire dacă o setare e greșită (dimensiunea embedding-ului, cheia lipsă), nu la prima cerere. Fiecare
+  cerere are un ID în loguri, iar o excepție neașteptată devine un 500 generic, fără detalii către client.”
+- „Limite pe care le recunosc: o singură categorie de chei (fără izolare pe client), cheie simplă în loc de token semnat,
+  streaming-ul nu poate retrage tokenii deja trimiși și nu raportează consumul.”
