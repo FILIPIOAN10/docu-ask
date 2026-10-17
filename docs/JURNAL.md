@@ -110,3 +110,57 @@ Neverificat încă: viteza indexului HNSW (nu am date pe care să o măsor); vin
 - „Dimensiunea embedding-ului (1536) apare în config, model și migrare; dacă schimb modelul, fac migrare nouă și
   reindexez.”
 - „Sesiunile de bază de date sunt scurte: nu țin o conexiune din pool cât aștept modelul de limbaj.”
+
+---
+
+## Faza C — Furnizorii de model, reali și falși (pașii 9–10) · 2026-10-17
+
+### Ce am făcut
+- **Pas 9 — `fake.py`.** `FakeEmbeddings` (hashed bag of words, 1536 de dimensiuni) și `FakeChatModel` (extractiv: copiază
+  frazele cele mai relevante din pasajul cel mai potrivit și îl citează). Fără cheie, fără rețea.
+- **Pas 10 — `providers.py`.** Singurul loc care construiește clienții de model: `fake`, `openai` sau `azure`, alese din
+  `LLM_PROVIDER`. `get_embeddings()` și `get_chat_model()` cu `lru_cache`.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Un model și un embedding **false**, deterministe | Testele, CI-ul și demo-ul nu depind de cheie, rețea sau bani; testez logica mea, nu modelul furnizorului |
+| Hash cu `blake2b`, nu `hash()` din Python | `hash()` dă alte valori la fiecare rulare; testele au nevoie de aceiași vectori mereu |
+| Semn ±1 pe fiecare „coș” al vectorului | Răspândește coliziunile în jurul lui zero; apoi normalizez la lungime 1, deci cosinus = produs scalar |
+| `FakeChatModel` respectă același contract ca unul real (`with_structured_output` → `raw/parsed/parsing_error`) | Restul codului nu știe că modelul e fals |
+| `providers.py` = singurul loc cu clienții | Schimb furnizorul dintr-o variabilă de mediu, nu din cod |
+| `_need(...)` ridică `ProviderConfigError` la construire | Fail fast: lipsa unei chei oprește procesul la pornire, nu la prima cerere |
+| Azure: numele **deployment-ului**, nu al modelului | Așa funcționează Azure OpenAI (deployment-ul îl creez eu în portal) |
+| `check_embedding_ctx_length=False` | Altfel biblioteca trimite liste de token-id și descarcă un vocabular de pe internet; trimit text simplu |
+| Fără `temperature` | Unele modele noi o resping; stabilitatea vine din schema strictă de ieșire și din prompt |
+| `timeout` și `max_retries` pe fiecare client | Nu aștept la nesfârșit un API extern; reîncerc puțin |
+
+### Ce am verificat (rezultate reale)
+- Embedding: `len=1536`; similaritate între „sick leave days” și „how many sick leave days” = **0.87**; cu „zebra giraffe
+  safari” = **0.0**
+- Model fals: răspuns cu citare (`... after 3 days. [1]`) pe întrebarea acoperită; `The documents do not cover this.`
+  pe întrebarea fără legătură
+- `get_embeddings().embed_query('sick leave')` → 1536 de numere
+- `LLM_PROVIDER=openai` fără cheie → `ProviderConfigError: OPENAI_API_KEY is required when LLM_PROVIDER is set to this
+  provider` (fail fast, confirmat)
+- `ruff check` → `All checks passed!`; `ruff format --check` → fără diferențe
+
+**Neverificat:** niciun apel către OpenAI sau Azure real (nu am rulat codul cu o cheie reală); clienții reali sunt
+doar construiți corect. `with_structured_output` al modelului fals nu poate fi testat până la schema din Pasul 17.
+
+### Capcane
+- **Modelul fals e prost intenționat.** Întrebarea „What is the capital of France?” îl poate păcăli (găsește „capital
+  cities” într-un document de cheltuieli). Nu e un bug de ascuns: e motivul pentru care există trei filtre „nu știu” și
+  evaluare cu modele reale.
+- **Embedding-ul fals e lexical.** „holiday” și „leave” nu se potrivesc; un model real ar face-o. Diferența o măsor la
+  evaluare (Faza I), cu embedding real.
+- **Formatul promptului e un contract ascuns.** `FakeChatModel` caută pasaje `[n] etichetă\ntext` și
+  `<question>...</question>`; promptul din Pasul 18 trebuie să folosească exact acest format.
+
+### Cum o spun la interviu
+- „Am un furnizor fals, determinist, pentru embedding și pentru modelul de chat. Nu e trișare: testez logica mea
+  (tăiere, căutare, filtre de refuz, citări), nu modelul furnizorului. Testele merg gratis, repetabil, fără rețea.”
+- „Clienții de model se construiesc într-un singur modul. Trec de la fake la OpenAI sau Azure schimbând o variabilă de
+  mediu, iar o setare lipsă oprește procesul la pornire.”
+- „Modelul fals e lexical și intenționat slab: nu pretind că măsoară calitatea unui model real. Calitatea o măsor separat,
+  cu un set de întrebări cu răspuns cunoscut, și cu embedding real când am cheie.”
