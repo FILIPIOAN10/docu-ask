@@ -545,3 +545,65 @@ Opt fișiere de teste, **58 de teste** în total, pe Postgres real cu pgvector:
 - „Pentru OpenAI am un server HTTP local care vorbește protocolul, iar clasele reale ale clientului îi vorbesc. Așa prind
   greșeli de cerere fără cheie și fără cost. Nu dovedește calitatea modelului; pe aceea o măsor separat.”
 - „Am 58 de teste și 92 % acoperire. Nu sunt acoperite CLI-ul și câteva ramuri de eroare, și știu care.”
+
+---
+
+## Faza I — Evaluarea: măsori, nu ghicești (pașii 32–34) · 2026-10-17
+
+### Ce am făcut
+- **Pas 32 — `eval/golden.jsonl`.** 28 de întrebări: 22 **cu răspuns**, formulate altfel decât textul („vacation days” pentru „annual leave”,
+  „doctor's note” pentru „medical certificate”), și 6 **fără răspuns** (2 banale, 4 „perfide”, apropiate de domeniu).
+- **Pas 33 — `evaluate.py` + `tests/test_evaluate.py`.** Măsoară hit@1, hit@3 și MRR pentru cele trei moduri de căutare și
+  verifică poarta de refuz (distanța). Opțiunea `--min-hit3` dă cod de ieșire 1 dacă hibridul scade sub prag.
+- **Pas 34 — rularea.** Tabelul de cifre pe cele 5 documente din bază.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Set de evaluare propriu („golden”), cu întrebări parafrazate | Testează și sensul, nu doar potrivirea de cuvinte; îmi spune dacă o schimbare ajută sau strică |
+| Șase întrebări fără răspuns, dintre care patru apropiate de domeniu | Un sistem prost ar inventa răspunsuri tocmai la întrebări care *par* acoperite („CEO's salary”) |
+| Metrici: hit@1, hit@3, MRR | hit@1 = secțiunea corectă e prima; hit@3 = e printre primele trei; MRR răsplătește poziția (1,0 = mereu prima) |
+| Evaluare prin `HybridRetriever` | Același retriever standard LangChain pe care îl poate folosi orice lanț sau agent |
+| Poarta de refuz măsurată separat: `positives_max` față de `negatives_min` | Văd dacă există un prag care separă întrebările cu răspuns de cele fără |
+| `--min-hit3` cu cod de ieșire 1 | Poartă pentru CI: un build pică dacă cineva strică căutarea |
+| Evaluarea e și un test obișnuit în suită | O regresie de căutare pică la `pytest`, nu rămâne neobservată |
+| Experimentele cu altă configurație rulează pe **baze separate** | Ingestia e idempotentă (hash), deci o reingestie pe aceeași bază răspunde `unchanged` și nu mai re-taie nimic |
+
+### Ce am verificat (rezultate reale, embedding fals)
+```text
+| search | hit@1 | hit@3 | MRR |
+| vector | 77% | 100% | 0.88 |
+| keyword | 86% | 100% | 0.93 |
+| hybrid | 91% | 100% | 0.95 |
+MAX_DISTANCE = 0.95; farthest answerable: 0.918; nearest unanswerable: 0.702
+answerable let through: 100%; unanswerable refused: 33%
+```
+- **Hibridul bate ambele variante simple** la hit@1 (91 % față de 77 % și 86 %), pe cele 22 de întrebări.
+- **Poarta de distanță nu separă cu embedding-ul fals:** întrebarea cu răspuns cea mai îndepărtată (0,918) e mai departe decât
+  cea fără răspuns cea mai apropiată (0,702); la 0,95 doar 33 % din cele fără răspuns sunt refuzate de poartă.
+- `--min-hit3 0.9` → cod de ieșire 0; un prag imposibil (`1.01`) → `FAIL: hybrid hit@3 100% is below 101%` și cod 1 (rulat de mine).
+- `pytest` → **60 de teste trec**, acoperire **91 %**; `ruff` curat. `evaluate.py` are ~73 % (`main` și `--report` nu au teste).
+- **Experiment cu dimensiunea bucății** (rulat de mine, pe baze temporare, șterse): `CHUNK_SIZE=300` → 26 de bucăți, cifre
+  neschimbate; `CHUNK_SIZE=150` → 81 de bucăți, vector 73 %, keyword 91 %, **hibrid 95 %** (MRR 0,98).
+
+**Neverificat încă:** evaluarea cu **embedding real** (rămâne opțională aici, apoi la pașii 40–41); `MAX_DISTANCE` nu e calibrat;
+se evaluează doar căutarea, nu calitatea răspunsurilor generate și nici refuzul de la un capăt la altul.
+
+### Capcane
+- **Sugestia din ghid** („schimbi `chunk_size` în `.env` și reingestezi”) **nu funcționează pe aceeași bază**: ingestia vede
+  același hash și răspunde `unchanged`. Experimentul cere o bază separată.
+- **Setul l-am scris eu, pe documente pe care le cunosc**: e bun ca *semnal de regresie*, nu ca dovadă de calitate; poate fi optimist.
+- **Concluzii cu rezervă din experimentul cu bucăți:** 22 de întrebări și embedding fals; „hibridul a ieșit mai bun cu bucăți
+  mici, pe acest set mic” nu înseamnă „schimb valoarea implicită”.
+- `evaluate` se rulează din rădăcina repo-ului (calea implicită `eval/golden.jsonl` e relativă).
+
+### Cum o spun la interviu
+- „Nu am judecat căutarea «după ochi»: am un set de 28 de întrebări, 22 cu secțiunea corectă cunoscută și 6 fără răspuns, și un
+  script care măsoară hit@1, hit@3 și MRR pentru căutarea vectorială, pe cuvinte și hibridă. Pe acest set, hibridul a dat 91 %
+  hit@1, față de 77 % (vector) și 86 % (cuvinte).”
+- „Cifrele sunt cu un embedding fals, lexical, pe un set mic scris de mine: le folosesc ca semnal de regresie, nu ca dovadă de
+  calitate. Evaluarea rulează și ca test, iar cu `--min-hit3` poate opri un build în CI.”
+- „Am măsurat și poarta de refuz: cu embedding fals, distanța nu separă întrebările cu răspuns de cele fără (0,918 față de
+  0,702), deci avem trei filtre, nu unul. Pragul îl calibrez pe date, nu îl ghicesc.”
+- „Când am vrut să văd efectul dimensiunii bucății, am observat că ingestia idempotentă ignoră re-rularea cu altă setare;
+  am folosit o bază separată pentru experiment.”

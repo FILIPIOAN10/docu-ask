@@ -1,0 +1,28 @@
+{"q": "How many vacation days do I get each year?", "doc": "leave-policy.md", "section": "Annual leave", "expect": "answer"}
+{"q": "Can I take unused holiday days into next year?", "doc": "leave-policy.md", "section": "Carry-over", "expect": "answer"}
+{"q": "When do I need a doctor's note if I am sick?", "doc": "leave-policy.md", "section": "Sick leave", "expect": "answer"}
+{"q": "How long is paternity leave for fathers?", "doc": "leave-policy.md", "section": "Parental leave", "expect": "answer"}
+{"q": "What happens when a public holiday falls on a Saturday?", "doc": "leave-policy.md", "section": "Public holidays", "expect": "answer"}
+{"q": "How many days per week must I be in the office?", "doc": "remote-work.md", "section": "Hybrid model", "expect": "answer"}
+{"q": "How much money do I get to set up my home office?", "doc": "remote-work.md", "section": "Equipment", "expect": "answer"}
+{"q": "Am I allowed to work from another country?", "doc": "remote-work.md", "section": "Working from abroad", "expect": "answer"}
+{"q": "Between which hours must I be reachable?", "doc": "remote-work.md", "section": "Core hours", "expect": "answer"}
+{"q": "Do I need a VPN when I work from a cafe?", "doc": "remote-work.md", "section": "Network security while remote", "expect": "answer"}
+{"q": "Which class of flight ticket can I book for a long trip?", "doc": "expenses.md", "section": "Booking travel", "expect": "answer"}
+{"q": "How much is the per diem for meals on a business trip?", "doc": "expenses.md", "section": "Daily allowance", "expect": "answer"}
+{"q": "How long do I have to upload my receipts?", "doc": "expenses.md", "section": "Receipts", "expect": "answer"}
+{"q": "Who must approve a purchase of 1,500 EUR?", "doc": "expenses.md", "section": "Approval limits", "expect": "answer"}
+{"q": "Do you pay me back for using my own car?", "doc": "expenses.md", "section": "Not reimbursed", "expect": "answer"}
+{"q": "Who do I contact if my laptop is stolen?", "doc": "information-security.md", "section": "Reporting incidents", "expect": "answer"}
+{"q": "What does the SEC prefix on a ticket mean?", "doc": "information-security.md", "section": "Reporting incidents", "expect": "answer"}
+{"q": "How long does access to production data last?", "doc": "information-security.md", "section": "Personal data and GDPR", "expect": "answer"}
+{"q": "Can I paste customer data into a public AI chatbot?", "doc": "information-security.md", "section": "Software and AI tools", "expect": "answer"}
+{"q": "How long is the probation period?", "doc": "onboarding.md", "section": "Probation", "expect": "answer"}
+{"q": "How much is the yearly budget for courses and conferences?", "doc": "onboarding.md", "section": "Learning budget", "expect": "answer"}
+{"q": "Is there a gym benefit?", "doc": "onboarding.md", "section": "Benefits", "expect": "answer"}
+{"q": "What is the capital of France?", "expect": "refuse"}
+{"q": "How do I cook spaghetti carbonara?", "expect": "refuse"}
+{"q": "What is the CEO's salary?", "expect": "refuse"}
+{"q": "Which programming language does the backend use?", "expect": "refuse"}
+{"q": "What is the company's stock price today?", "expect": "refuse"}
+{"q": "How many employees work at the company?", "expect": "refuse"}
