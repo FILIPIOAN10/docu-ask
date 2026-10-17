@@ -225,3 +225,66 @@ rulat pe niciun fișier; testul din Faza H generează un PDF cu `fpdf2`); embedd
 - „Apelul de embedding se face în afara tranzacției: nu țin o conexiune și un lock pe rând cât aștept un API extern.”
 - „Dimensiunea bucății (800) e un punct de pornire, nu o valoare demonstrată; o aleg măsurând, cu un set de
   întrebări cu răspuns cunoscut.”
+
+---
+
+## Faza E — Căutarea: vector, cuvinte, hibrid (pașii 15–16) · 2026-10-17
+
+### Ce am făcut
+- **Pas 15 — `retrieval.py`.** Trei moduri de căutare (`vector`, `keyword`, `hybrid`), fuziunea RRF și un
+  `HybridRetriever` (interfață standard LangChain).
+- **Pas 16 — încercare manuală.** Un script temporar `try_search.py` (șters după rulare, nu face parte din proiect) care
+  rulează cele trei moduri pe aceeași întrebare, pe cele 25 de bucăți din bază.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Căutare **hibridă** (vector + cuvinte), nu doar vectorială | Vectorii prind sensul; cuvintele prind identificatori, numere și coduri („GDPR”, „SEC-”) pe care embedding-urile le estompează |
+| Fuziune **RRF** pe poziții, nu pe scoruri | Distanța cosinus și rank-ul full-text au scări diferite; pozițiile se pot combina fără calibrare |
+| `RRF_K = 60` (din lucrarea originală) | Aplatizează avantajul poziției 1 față de 2; nu-l „optimizez” fără o evaluare |
+| Interogarea `tsquery` o construiesc eu din tokeni `\w+`, cu `OR` | O întrebare naturală trebuie să găsească bucăți cu *o parte* din cuvinte (`plainto_tsquery` le-ar cere pe toate); fără sintaxă injectabilă (`&`, `!`, `:*`) |
+| `best_distance` = cea mai mică distanță dintre **toți** candidații vectoriali | O folosește poarta de refuz nr. 1 (Faza F), chiar dacă bucata nu intră în top-k |
+| `candidate_k = 20` per ramură înainte de fuziune | Fiecare listă aduce destui candidați ca fuziunea să aibă ce combina |
+| Egalitățile se rezolvă după `Chunk.id` | Rezultat determinist, deci testabil |
+| `HybridRetriever` ca `BaseRetriever` | Același cod intră în orice lanț, agent sau unealtă de evaluare care așteaptă un retriever |
+| Căutarea ca modul separat de generare | O măsor și o testez separat: dacă bucata corectă nu ajunge în prompt, modelul nu o mai salvează |
+
+### Ce am verificat (rezultate reale)
+Întrebarea „How long is paternity leave for fathers?”, `k=3`:
+```text
+vector   best_distance=0.5625 top3=[('Parental leave', 0.0), ('Annual leave', 0.0), ('Carry-over', 0.0)]
+keyword  best_distance=None top3=[('Parental leave', 0.0), ('Annual leave', 0.0), ('Carry-over', 0.0)]
+hybrid   best_distance=0.5625 top3=[('Parental leave', 0.0328), ('Annual leave', 0.0323), ('Carry-over', 0.0317)]
+```
+- Toate trei modurile pun „Parental leave” pe primul loc. Scorurile RRF se potrivesc cu formula: `0.0328 = 2/61`
+  (poziția 1 în ambele liste), `0.0323 = 2/62`, `0.0317 = 2/63`.
+- Alte întrebări, rulate pe baza locală (embedding fals): „SEC- ticket prefix” → *Reporting incidents*
+  (`best_distance` 0.7226); „how much money for a desk and chair at home” → *Equipment* (0.7764).
+- **Întrebarea fără răspuns în documente** „What is the capital of France?” → `best_distance` **0.9136**, iar căutarea
+  întoarce totuși *Booking travel* („capital cities”). Față de 0.56–0.78 la întrebările cu răspuns, diferența e clară,
+  deci poarta de refuz bazată pe distanță are pe ce se sprijini. Pragul din `config.py` (0.95) e prea larg pentru
+  embedding-ul fals; îl calibrez la Pasul 41. (Sunt puține întrebări și embedding fals: o indicație, nu o dovadă.)
+- `ruff check` și `ruff format --check` curate.
+
+**Neverificat încă:** calitatea căutării măsurată cu hit@k și MRR (Faza I); `HybridRetriever` nu a rulat încă
+(intră în joc în Faza F și I); folosirea efectivă a indecșilor HNSW și GIN (cu 25 de rânduri planificatorul probabil
+alege oricum scanare secvențială; ar conta la volum mare); căutare cu embedding real.
+
+### Capcane
+- **Stemming englezesc.** Configurația `english` din full-text merge pentru documente în engleză; pentru română ar trebui
+  alta, sau doar partea vectorială. Se alege per limbă.
+- **Constanta 60 din RRF** nu se schimbă fără o evaluare care să arate că ajută.
+- **Distanță vs similaritate.** Distanța cosinus: mic = bun (0 = identic). Similaritatea = `1 − distanță`: mare = bun.
+  E ușor să le încurci când compari un prag.
+- **Embedding-ul fals e lexical**, deci aici `vector` și `keyword` dau liste asemănătoare; diferența reală dintre
+  moduri apare cu embedding real și la evaluare.
+
+### Cum o spun la interviu
+- „Căutarea e hibridă: vectorii prind sensul întrebării, iar full-text-ul prinde identificatori și numere exacte. Le
+  combin cu Reciprocal Rank Fusion, pe poziții, ca să nu calibrez două scări diferite de scoruri.”
+- „Din întrebare construiesc eu interogarea full-text, din cuvinte simple legate prin OR. Așa o întrebare naturală
+  găsește rezultate, iar utilizatorul nu poate injecta operatori de interogare.”
+- „Păstrez cea mai mică distanță dintre candidații vectoriali, chiar dacă bucata nu ajunge în top: pe ea se bazează
+  primul filtru de refuz, înainte să plătesc un apel la model.”
+- „Căutarea e un modul separat de generare, ca s-o pot testa și măsura separat: dacă bucata corectă nu ajunge în prompt,
+  niciun model n-o mai salvează.”
