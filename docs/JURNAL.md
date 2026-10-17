@@ -736,3 +736,62 @@ comportamentul pe un pull request și regula de protecție pe `main`.
   deploy automat și o matrice de versiuni de Python.”
 - „Înainte de primul push am emulat local fiecare pas al pipeline-ului (lint, teste, poarta de evaluare, imaginea), iar prima rulare
   reală pe GitHub a fost verde, în aproximativ două minute. Dovada e în istoricul de Actions.”
+
+---
+
+## Faza L — Modelul real, calibrarea, README (pașii 40–43) · 2026-10-17
+
+### Ce am făcut
+- **Pas 40 — model real.** Evaluarea completă și întrebări cu `text-embedding-3-small` și `gpt-4o-mini`, pe baza separată `docuask_real`.
+- **Pas 41 — calibrare.** `MAX_DISTANCE` ales din distribuția tuturor celor 28 de distanțe: **0,72**.
+- **Pas 42 — Azure.** Sărit la început (n-aveam cont Azure); reluat după README, vezi secțiunea de mai jos când e completată.
+- **Pas 43 — README.** Cu badge de CI, cele două seturi de cifre (embedding fals și real) și o secțiune „ce am verificat și ce nu”.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Prag **0,72**, setat ca **variabilă de mediu** în terminalul cu modelul real, nu în `.env` | `.env` e folosit și de modelul fals, la care întrebările cu răspuns ajung la 0,918; 0,72 l-ar face să refuze întrebări bune |
+| Pragul stă puțin peste cea mai îndepărtată întrebare cu răspuns (0,683, marjă 0,037) și sub 0,739 | Refuzul unei întrebări bune e mai grav decât un apel de model în plus; **nu rotunjesc pragul în jos** (un prag de 0,65 ar refuza întrebarea cu cod „SEC prefix”) |
+| README corectat față de ghid: „hibridul bate ambele” e adevărat doar cu embedding fals | Cu embedding real, `vector` singur a ieșit mai bine pe setul meu; afirmația trebuie să fie ce am măsurat |
+| Nu schimb codul pentru egalitatea din RRF | E o descoperire de documentat și de măsurat separat, nu o modificare făcută din impuls |
+
+### Rezultate reale
+| Căutare | embedding fals: hit@1 / MRR | `text-embedding-3-small`: hit@1 / MRR |
+|---|---|---|
+| vector | 77 % / 0,88 | **100 % / 1,00** |
+| keyword | 86 % / 0,93 | 86 % / 0,93 (identic, ca verificare: nu folosește embedding) |
+| hybrid | 91 % / 0,95 | 95 % / 0,98 |
+
+hit@3 e 100 % peste tot.
+
+- **Distanțe reale (cea mai apropiată bucată):** 21 de întrebări cu răspuns între 0,252 și 0,612; **„SEC prefix” (întrebare cu cod) la 0,683**; fără
+  răspuns: 0,671 (angajați), 0,739 (salariul CEO), 0,770 (limbajul backend), 0,798 (Franța), 0,843 (bursa), 0,922 (carbonara). Se suprapun cu 0,012.
+- **Pragul pe aceste date:** 0,65 → 21/22 cu răspuns trec, 6/6 refuzate; **0,72 → 22/22 trec, 5/6 refuzate**; 0,75 → 22/22, 4/6; 0,95 → 22/22, 0/6.
+- **Verificat cu `MAX_DISTANCE=0.72`:** `evaluate` → 100 % trec, 83 % refuzate; „capital of France” → `too_far`, `usage` **0/0** (înainte 559 de
+  tokeni); „SEC prefix” → răspuns corect, cu citare; „How many employees work at the company?” (0,671) → trece de poartă, **modelul** refuză
+  (`not_covered`, 554/11 tokeni). Cele trei filtre au lucrat în ordinea proiectată.
+- **Descoperire — egalitate în RRF.** Hibridul are 95 %, nu 100 %, din cauza unei întrebări (carry-over) cu rangurile 1 (vector) și 2 (cuvinte): o bucată
+  pe pozițiile (1, 2) are scorul `1/61 + 1/62`, **identic** cu una pe (2, 1), iar egalitatea se rezolvă după `chunk_id`, nu după căutarea vectorială.
+  Am reprodus-o cu `fuse`. Un tie-break după rangul vectorial ar fi de încercat și de măsurat; nu l-am implementat.
+- **Nedeterminism.** Aceeași întrebare („SEC prefix”) a produs două texte diferite (49 față de 57 de tokeni de ieșire), cu aceeași citare: nu trimit
+  `temperature`, iar stabilitatea vine din schema strictă și din verificarea citărilor, nu din text identic.
+- Testul `hybrid ≥ max(vector, keyword)` din `test_evaluate.py` e o proprietate a setării false (cu embedding real ar pica); testele rulează cu modelul fals.
+
+### Neverificat încă
+Azure OpenAI pe un endpoint real; latențe și comportament sub încărcare; calitatea pe alte documente decât cele cinci; efectul unui tie-break după
+rangul vectorial; calitatea răspunsurilor generate (măsurăm doar căutarea și refuzul).
+
+### Capcane
+- **`.env` e comun** modelului fals și celui real, deci orice valoare calibrată pentru cel real (pragul) se setează în terminal, nu în `.env`.
+- **Poarta de distanță nu poate separa perfect** (suprapunere de 0,012): e un filtru ieftin, nu o garanție; `covered` și citările rămân necesare.
+- **Setul e mic și scris de mine**: concluziile despre „vector vs hibrid” sunt valabile pe acest set, cu acest model de embedding.
+
+### Cum o spun la interviu
+- „Am rulat DocuAsk cu OpenAI și am comparat embedding-ul fals cu cel real pe aceleași 28 de întrebări: vectorii reali au dus hit@1 de la 77 % la
+  100 %, iar hibridul a ajuns la 95 %. Cu un model real, căutarea vectorială singură a ieșit mai bine decât hibridul pe setul meu mic, deci n-am
+  considerat hibridul un câștig automat.”
+- „Am investigat de ce hibridul pierde o întrebare și am găsit o egalitate de scor în Reciprocal Rank Fusion, rezolvată după un id arbitrar. Știu
+  remediul probabil, un tie-break după rangul vectorial, dar îl voi implementa abia după ce îl măsor.”
+- „Pragul de refuz l-am calibrat pe toate cele 28 de distanțe: 0,72 lasă să treacă toate întrebările cu răspuns și refuză 5 din 6 fără răspuns înainte de
+  model; a șasea e refuzată de model. O întrebare străină nu mai costă tokeni.”
+- „Răspunsurile unui LLM nu sunt identice la fiecare rulare; de aceea testele mele cu modele reale verifică structura și citările, nu textul.”
