@@ -474,3 +474,74 @@ Cifrele pe setul de 28 de întrebări (hit@k, MRR, distanțe) cu embedding real;
   cerere are un ID în loguri, iar o excepție neașteptată devine un 500 generic, fără detalii către client.”
 - „Limite pe care le recunosc: o singură categorie de chei (fără izolare pe client), cheie simplă în loc de token semnat,
   streaming-ul nu poate retrage tokenii deja trimiși și nu raportează consumul.”
+
+---
+
+## Faza H — Teste (pașii 24–31) · 2026-10-17
+
+### Ce am făcut
+Opt fișiere de teste, **58 de teste** în total, pe Postgres real cu pgvector:
+| Fișier | Teste | Ce acoperă |
+|---|---|---|
+| `conftest.py` | — | baza de test, migrarea, fixture-uri (`sessions`, `settings`, `loaded`, `client`) |
+| `test_fake.py` | 6 | embedding-ul și modelul fals |
+| `test_chunking.py` | 7 | citire și tăiere (md, txt, pdf), NUL, fișiere invalide |
+| `test_ingest.py` | 6 | ingestie, idempotență, dimensiune greșită, **concurență** |
+| `test_retrieval.py` | 13 | RRF, cele trei moduri, text ostil, retriever LangChain |
+| `test_rag.py` | 11 | cele trei filtre, citări inventate, ieșire malformată, streaming |
+| `test_api.py` | 9 | rutele, codurile de stare, cheile, SSE, `X-Request-ID` |
+| `fake_openai.py` + `test_providers.py` | 6 | contract cu clasele reale OpenAI/Azure, contra unui server local fals |
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| **Postgres real cu pgvector** (Testcontainers), nu SQLite sau mock-uri | Comportamentul pgvector, full-text, `FOR UPDATE` și `UNIQUE` nu se poate simula; testez pe același tip de bază ca în producție |
+| Containerul pornește o dată pe sesiune; în CI, `TEST_DATABASE_URL` | Rapid local; în CI folosesc serviciul existent |
+| `alembic upgrade head` rulat în teste | Testez și migrarea: dacă ar fi greșită, toate testele ar pica |
+| `TRUNCATE chunks, documents RESTART IDENTITY CASCADE` înainte de fiecare test | Fiecare test pornește dintr-o bază goală; testele nu se influențează |
+| `Settings(_env_file=None, llm_provider="fake")` în teste | `.env` (cu cheia OpenAI) nu poate ajunge în teste; nu se poate apela din greșeală un API plătit |
+| `TestClient` + `dependency_overrides` | Testez aplicația fără server, înlocuind baza, setările și modelele |
+| Dubluri de test definite inline (`Exploding`, `WrongWidth`, `Synced`, `Spy`, `Liar`, `Broken`) | Fiecare regulă se dovedește izolat: nicio chemare la embedding la fișier neschimbat, vectori de lățime greșită, model care minte sau care e apelat |
+| **Test de concurență cu `threading.Barrier(2)`** | Fără barieră, două fire rareori se întrec exact; așa ambele termină embedding-ul și scriu împreună. Rezultat acceptat: un document, 2 bucăți (nu 4) |
+| Text ostil în căutare (`'; DROP TABLE chunks; --`, `a & b \| !c :*`, ...) | Dovedește că textul utilizatorului nu poate strica interogarea full-text și că tabela rămâne |
+| Server OpenAI fals (FastAPI) + clasele **reale** `ChatOpenAI`/`OpenAIEmbeddings` | Prind greșeli de cerere (ex. embedding trimis ca liste de token-id), fără cheie, rețea sau cost |
+| PDF de test generat cu `fpdf2` | Nu țin fișiere binare în repo |
+| Numele testelor = specificația | Se citesc ca o listă de reguli ale sistemului |
+
+### Ce am verificat (rezultate reale)
+- `uv run pytest --cov=docuask --cov-report=term-missing` → **58 passed** în 18,7 s; acoperire **TOTAL 92 %**.
+  100 %: `chunking`, `config`, `ingest`, `models`, `providers`, `retrieval`, `schemas`, `security`; 91–95 %: `api`, `fake`, `main`, `rag`;
+  75 %: `db`; **0 %: `cli`**.
+- `ruff check` → `All checks passed!`; `ruff format --check` → 33 de fișiere formatate.
+- Rezultat identic cu rularea mea de control pe același cod (58 de teste, 92 %).
+
+**Neverificat / limite, cinstit:**
+- `cli.py` nu are teste (0 %); `db.py` 75 % (`get_engine`, `get_session_factory` și `get_session` nu rulează în teste, fiindcă
+  `conftest.py` le înlocuiește prin `dependency_overrides`).
+- Ramuri de eroare nescrise: `/health/ready` cu `503`, handler-ul global `500`, verificarea `EMBEDDING_DIM` din `lifespan`,
+  tratarea erorilor la streaming (`rag.py` 209–212), calea `409 IngestConflict` prin HTTP.
+- Serverul OpenAI fals dovedește **forma** cererilor și răspunsurilor, nu calitatea unui model real; calitatea o măsor la
+  evaluare (Faza I) și la pașii 40–41.
+- Testul de concurență folosește două fire, nu o sarcină reală.
+- `test_evaluate.py` (testul pentru evaluare) vine în Faza I, deci numărul final de teste va crește.
+
+### Capcane
+- **Docker trebuie pornit**; prima rulare e lentă, fiindcă pornește un container nou (și descarcă imaginea, dacă lipsește).
+- **Terminal curat.** `lifespan`-ul din `main.py` apelează `get_settings()` direct, nu prin `Depends`, deci override-ul din
+  teste nu-l atinge; variabilele `LLM_PROVIDER`/`DATABASE_URL` rămase din alte experimente pot schimba comportamentul.
+- **Baza de test e a ei**, pe un port aleatoriu, nu `docuask`-ul de dezvoltare; la final, containerul dispare.
+- **Cod mort în teste:** clasa `MustNotBeCalled` din `test_rag.py` e definită dar nefolosită (e în codul verificat din ghid și
+  `ruff` n-o prinde); la o curățenie ulterioară se șterge.
+- `.coverage` și `.pytest_cache/` sunt în `.gitignore`, nu se commitează.
+
+### Cum o spun la interviu
+- „Testele rulează pe un Postgres real cu pgvector, pornit de Testcontainers, nu pe mock-uri; migrarea se aplică în teste,
+  deci o verific și pe ea. Fiecare test pornește dintr-o bază goală, iar setările de test ignoră `.env`, deci cheia reală nu
+  poate ajunge acolo.”
+- „Concurența: două fire care ingerează același nume nou, sincronizate cu o barieră ca să se întreacă efectiv. Rezultatul:
+  un singur document și două bucăți, niciodată duplicate. Asta dovedește constrângerea unică și blocarea rândului.”
+- „Verific fiecare filtru de refuz separat: un spion dovedește că modelul nu e apelat când poarta de distanță refuză, un
+  «model mincinos» care citează un pasaj inexistent e respins, iar o ieșire malformată e eroare, nu răspuns inventat.”
+- „Pentru OpenAI am un server HTTP local care vorbește protocolul, iar clasele reale ale clientului îi vorbesc. Așa prind
+  greșeli de cerere fără cheie și fără cost. Nu dovedește calitatea modelului; pe aceea o măsor separat.”
+- „Am 58 de teste și 92 % acoperire. Nu sunt acoperite CLI-ul și câteva ramuri de eroare, și știu care.”
