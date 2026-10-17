@@ -88,3 +88,12 @@ def test_streaming_endpoint_sends_server_sent_events(client):
 def test_every_response_carries_a_request_id_and_keeps_the_callers_id(client):
     assert client.get("/health/live").headers["X-Request-ID"]
     assert client.get("/health/live", headers={"X-Request-ID": "abc123"}).headers["X-Request-ID"] == "abc123"
+
+
+def test_the_home_page_needs_no_key_and_is_safe_by_construction(client):
+    client.headers.pop("X-API-Key")
+    response = client.get("/")
+    assert response.status_code == 200 and response.headers["content-type"].startswith("text/html")
+    assert "DocuAsk" in response.text
+    assert "default-src 'none'" in response.headers["content-security-policy"]
+    assert "innerHTML" not in response.text  # text from documents is only ever rendered with textContent

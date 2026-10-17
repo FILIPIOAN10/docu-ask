@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocuAsk</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1b2230; --muted: #5a6475; --line: #dde1e8;
+    --accent: #2457d6; --accent-text: #ffffff; --ok: #12755a; --warn: #8f5600; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --text: #e8ebf1; --muted: #9aa4b5; --line: #2c3442;
+      --accent: #7aa2ff; --accent-text: #0e1420; --ok: #4cc39c; --warn: #e5a53a; --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
+  header, main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+  h1 { margin: 0; font-size: 1.6rem; }
+  h2 { margin: 0 0 12px; font-size: 1.1rem; }
+  .tagline { margin: 2px 0 0; color: var(--muted); }
+  .keybox { display: flex; flex-direction: column; gap: 4px; min-width: 260px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); align-items: start; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  label { font-size: .85rem; color: var(--muted); }
+  input[type=password], textarea, input[type=file] {
+    width: 100%; padding: 8px 10px; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; font: inherit;
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  button {
+    font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .55; cursor: progress; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button.small { padding: 4px 10px; font-size: .85rem; }
+  button.chip { padding: 4px 10px; font-size: .85rem; border-radius: 999px; color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  .muted { color: var(--muted); }
+  .doc { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .docname { overflow-wrap: anywhere; }
+  .notice { margin: 8px 0 0; white-space: pre-line; font-size: .9rem; }
+  .error { color: var(--bad); }
+  .ok { color: var(--ok); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid currentColor; }
+  .badge.answered { color: var(--ok); }
+  .badge.refused { color: var(--warn); }
+  .answer { margin: 10px 0; white-space: pre-wrap; font-size: 1.05rem; }
+  .sources { margin: 8px 0 0; padding-left: 20px; }
+  .sources li { margin-bottom: 10px; }
+  blockquote { margin: 4px 0 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); font-size: .9rem; white-space: pre-wrap; }
+  .meta { margin-top: 10px; font-size: .85rem; color: var(--muted); }
+  #result { margin-top: 16px; }
+  footer { max-width: 1100px; margin: 0 auto; padding: 8px 16px 24px; color: var(--muted); font-size: .85rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>DocuAsk</h1>
+    <p class="tagline">Ask your documents. Get answers with sources, or an honest "not covered".</p>
+  </div>
+  <div class="keybox">
+    <label for="key">API key (<code>dev-key</code> when running locally)</label>
+    <input id="key" type="password" autocomplete="off" spellcheck="false">
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+    <section class="card" aria-labelledby="docs-title">
+      <h2 id="docs-title">Documents</h2>
+      <label for="file">Markdown, text or PDF (up to 5 MB each)</label>
+      <input id="file" type="file" accept=".md,.markdown,.txt,.pdf" multiple>
+      <div class="row">
+        <button id="upload" type="button" class="primary">Upload</button>
+        <button id="refresh" type="button">Refresh list</button>
+      </div>
+      <p id="upload-msg" class="notice" aria-live="polite"></p>
+      <div id="docs"></div>
+    </section>
+
+    <section class="card" aria-labelledby="ask-title">
+      <h2 id="ask-title">Ask</h2>
+      <label for="question">Your question (Ctrl+Enter to ask)</label>
+      <textarea id="question" maxlength="1000" placeholder="e.g. How many vacation days do I get each year?"></textarea>
+      <div class="row">
+        <button id="ask" type="button" class="primary">Ask</button>
+        <button id="passages" type="button">Show passages</button>
+      </div>
+      <div class="row" id="examples" aria-label="Example questions"></div>
+      <div id="result" aria-live="polite"></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  "Show passages" runs the search only (no model): it shows which fragments were found and how close they are.
+  The REST API is documented at <a href="/docs">/docs</a>.
+</footer>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+// Every piece of text from the server is set with textContent, so a document can never inject markup into the page.
+function el(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text !== undefined && text !== null) node.textContent = text;
+  if (cls) node.className = cls;
+  return node;
+}
+
+const REASONS = {
+  no_passages: "There are no documents yet. Upload one first.",
+  too_far: "The question does not look related to the documents, so the model was not called (cost: 0 tokens).",
+  not_covered: "The model read the closest passages and says they do not contain the answer.",
+  no_citation: "The model's answer cited nothing that can be verified, so it was discarded.",
+};
+
+const EXAMPLES = [
+  "How many vacation days do I get each year?",
+  "How long is paternity leave for fathers?",
+  "What does the SEC prefix on a ticket mean?",
+  "What is the capital of France?",
+  "How many employees work at the company?",
+];
+
+async function call(path, options = {}) {
+  const key = $("key").value.trim();
+  const res = await fetch(path, { ...options, headers: { "X-API-Key": key, ...(options.headers || {}) } });
+  if (res.status === 204) return null;
+  let body = null;
+  try { body = await res.json(); } catch (_) { /* no JSON body */ }
+  if (!res.ok) {
+    let detail = body && body.detail;
+    if (Array.isArray(detail)) detail = detail.map((d) => d.msg).join("; ");
+    throw new Error(res.status === 401 ? "Missing or wrong API key (401)" : `${detail || res.statusText} (${res.status})`);
+  }
+  return body;
+}
+
+function setNotice(id, text, kind) {
+  const node = $(id);
+  node.textContent = text;
+  node.className = "notice" + (kind ? " " + kind : "");
+}
+
+function setBusy(ids, busy) {
+  for (const id of ids) $(id).disabled = busy;
+}
+
+async function loadDocuments() {
+  const box = $("docs");
+  if (!$("key").value.trim()) {
+    box.replaceChildren(el("p", "Enter your API key above to start.", "muted"));
+    return;
+  }
+  try {
+    const docs = await call("/v1/documents");
+    box.replaceChildren();
+    if (!docs.length) {
+      box.append(el("p", "No documents yet. Upload one to start.", "muted"));
+      return;
+    }
+    for (const d of docs) {
+      const row = el("div", null, "doc");
+      const name = el("div", null, "docname");
+      name.append(el("strong", d.name), el("span", ` · ${d.chunk_count} chunks`, "muted"));
+      const del = el("button", "Delete", "danger small");
+      del.type = "button";
+      del.addEventListener("click", () => removeDocument(d));
+      row.append(name, del);
+      box.append(row);
+    }
+  } catch (e) {
+    box.replaceChildren(el("p", e.message, "error"));
+  }
+}
+
+async function removeDocument(d) {
+  if (!confirm(`Delete "${d.name}" and its ${d.chunk_count} chunks?`)) return;
+  try {
+    await call(`/v1/documents/${d.id}`, { method: "DELETE" });
+    setNotice("upload-msg", `Deleted ${d.name}.`, "ok");
+  } catch (e) {
+    setNotice("upload-msg", e.message, "error");
+  }
+  loadDocuments();
+}
+
+async function upload() {
+  const files = [...$("file").files];
+  if (!files.length) {
+    setNotice("upload-msg", "Choose a file first.", "error");
+    return;
+  }
+  setBusy(["upload", "refresh"], true);
+  setNotice("upload-msg", "Uploading and embedding...", "");
+  const lines = [];
+  let failed = false;
+  for (const f of files) {
+    const form = new FormData();
+    form.append("file", f);
+    try {
+      const r = await call("/v1/documents", { method: "POST", body: form });
+      lines.push(`${r.name}: ${r.status} (${r.chunk_count} chunks)`);
+    } catch (e) {
+      failed = true;
+      lines.push(`${f.name}: ${e.message}`);
+    }
+  }
+  setNotice("upload-msg", lines.join("\n"), failed ? "error" : "ok");
+  $("file").value = "";
+  setBusy(["upload", "refresh"], false);
+  loadDocuments();
+}
+
+function clearResult() {
+  $("result").replaceChildren();
+}
+
+function showMessage(text, cls) {
+  $("result").replaceChildren(el("p", text, cls));
+}
+
+function renderAnswer(r) {
+  const box = el("div");
+  box.append(el("span", r.refused ? "Refused" : "Answered", "badge " + (r.refused ? "refused" : "answered")));
+  if (r.refused) {
+    box.append(el("p", REASONS[r.reason] || `Refused (${r.reason}).`, "answer"));
+  } else {
+    box.append(el("p", r.answer, "answer"));
+    box.append(el("strong", "Sources"));
+    const list = el("ol", null, "sources");
+    for (const c of r.citations) {
+      const item = el("li");
+      const where = [c.document, c.section].filter(Boolean).join(" › ") + (c.page ? ` (page ${c.page})` : "");
+      item.append(el("span", `[${c.n}] ${where}`), el("blockquote", c.snippet));
+      list.append(item);
+    }
+    box.append(list);
+  }
+  const distance = r.best_distance === null ? "n/a" : r.best_distance.toFixed(3);
+  box.append(el("p", `Nearest passage distance: ${distance} · tokens in/out: ${r.usage.input_tokens}/${r.usage.output_tokens}`, "meta"));
+  $("result").replaceChildren(box);
+}
+
+function renderPassages(r) {
+  const box = el("div");
+  box.append(el("strong", "Passages found (no model was called)"));
+  if (!r.hits.length) {
+    box.append(el("p", "Nothing found.", "muted"));
+  } else {
+    const list = el("ol", null, "sources");
+    for (const h of r.hits) {
+      const item = el("li");
+      const where = [h.document, h.section].filter(Boolean).join(" › ");
+      const ranks = `vector #${h.vector_rank ?? "-"} · keyword #${h.keyword_rank ?? "-"}`;
+      const dist = h.distance === null ? "n/a" : h.distance.toFixed(3);
+      item.append(el("span", where), el("div", `distance ${dist} · score ${h.score.toFixed(4)} · ${ranks}`, "meta"), el("blockquote", h.content));
+      list.append(item);
+    }
+    box.append(list);
+  }
+  $("result").replaceChildren(box);
+}
+
+async function runQuestion(kind) {
+  const question = $("question").value.trim();
+  if (question.length < 3) {
+    showMessage("Type a question of at least 3 characters.", "error");
+    return;
+  }
+  setBusy(["ask", "passages"], true);
+  showMessage(kind === "ask" ? "Thinking..." : "Searching...", "muted");
+  try {
+    if (kind === "ask") {
+      renderAnswer(await call("/v1/ask", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
+      }));
+    } else {
+      renderPassages(await call("/v1/search", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: question, mode: "hybrid", k: 4 }),
+      }));
+    }
+  } catch (e) {
+    showMessage(e.message, "error");
+  } finally {
+    setBusy(["ask", "passages"], false);
+  }
+}
+
+for (const q of EXAMPLES) {
+  const chip = el("button", q, "chip");
+  chip.type = "button";
+  chip.addEventListener("click", () => { $("question").value = q; runQuestion("ask"); });
+  $("examples").append(chip);
+}
+
+$("upload").addEventListener("click", upload);
+$("refresh").addEventListener("click", loadDocuments);
+$("ask").addEventListener("click", () => runQuestion("ask"));
+$("passages").addEventListener("click", () => runQuestion("passages"));
+$("question").addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") runQuestion("ask");
+});
+$("key").addEventListener("change", () => {
+  try { sessionStorage.setItem("docuask-key", $("key").value); } catch (_) { /* storage blocked: fine */ }
+  clearResult();
+  loadDocuments();
+});
+
+try { $("key").value = sessionStorage.getItem("docuask-key") || ""; } catch (_) { /* storage blocked: fine */ }
+loadDocuments();
+</script>
+</body>
+</html>

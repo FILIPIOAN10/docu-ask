@@ -38,6 +38,12 @@ because PowerShell 5.1 strips the quotes inside `-d '{...}'`:
 `LLM_PROVIDER=fake` (the default) uses an offline lexical embedder and an extractive "model", so everything runs without
 a key. Set `LLM_PROVIDER=openai` or `azure` (see `.env.example`) for real models; there are no code changes.
 
+Then open **http://localhost:8000/**: a one-page UI with buttons to upload and delete documents, ask a question (there are
+example questions to click) and **Show passages** (retrieval only, with distances and scores, no model call). Type the API
+key (`dev-key` locally); it is kept only for the browser tab. The page is plain HTML and JavaScript served by the API itself:
+every piece of text that comes from the server is rendered with `textContent` (a document cannot inject markup), and the
+page is served with a strict Content-Security-Policy. The REST API is documented at `/docs`.
+
 ## Develop
 
 ```bash
@@ -61,6 +67,7 @@ uv run python -m docuask.evaluate       # retrieval quality on the golden set
 | POST | `/v1/ask` | grounded answer + citations, or `refused` with a `reason` |
 | POST | `/v1/ask/stream` | the same as server-sent events (`token` ... `done`) |
 | GET | `/health/live`, `/health/ready` | liveness (process) / readiness (database + pgvector + migrated schema) |
+| GET | `/` | the one-page UI (no key needed to load the page; the API calls it makes need one) |
 
 Auth: `X-API-Key` header, several keys allowed (rotation), constant-time comparison.
 
@@ -107,14 +114,15 @@ CI fails the build if hybrid hit@3 drops below 90 %.
 
 ## Quality gates
 
-`ruff` (lint + format), `pytest` (60 tests, about 90 % coverage, floor 80 %), the retrieval quality gate above, and a
+`ruff` (lint + format), `pytest` (61 tests, about 90 % coverage, floor 80 %), the retrieval quality gate above, and a
 Docker image job (build, start, health check), all in GitHub Actions.
 
 ## What was verified, and what was not
 
 Verified: the full test suite on a real Postgres; CI green on GitHub Actions; the stack through `docker compose`
 (non-root image, about 295 MB); ingestion, a 28-question evaluation and several questions with `text-embedding-3-small`
-and `gpt-4o-mini`.
+and `gpt-4o-mini`; the one-page UI in a browser (list, ask, refusal, passages, upload, delete, a phone-width layout and a
+document containing hostile HTML, which is shown as inert text).
 
 Not verified: Azure OpenAI against a real endpoint (only the client construction and a protocol-level contract test);
 latency or behaviour under load; real-world scanned or complex PDFs (the PDF test generates its own file); other
@@ -128,3 +136,4 @@ languages; image vulnerability scanning.
 - The distance threshold was calibrated on the bundled documents and 28 questions; recalibrate for yours.
 - No per-tenant isolation yet: one set of documents, shared by every API key. A single static API key list instead of signed tokens.
 - No tracing or metrics, only request-id logs.
+- The UI has no login (you type the API key) and does not use the streaming endpoint; "Delete" removes a document for real.

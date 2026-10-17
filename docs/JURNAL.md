@@ -795,3 +795,55 @@ rangul vectorial; calitatea răspunsurilor generate (măsurăm doar căutarea ș
 - „Pragul de refuz l-am calibrat pe toate cele 28 de distanțe: 0,72 lasă să treacă toate întrebările cu răspuns și refuză 5 din 6 fără răspuns înainte de
   model; a șasea e refuzată de model. O întrebare străină nu mai costă tokeni.”
 - „Răspunsurile unui LLM nu sunt identice la fiecare rulare; de aceea testele mele cu modele reale verifică structura și citările, nu textul.”
+
+---
+
+## Extra (după ghid) — pagina cu butoane · 2026-10-17
+
+Nu e în ghid: am cerut-o eu, fiindcă un API fără interfață e greu de arătat și de explicat. Rămâne un singur fișier, fără framework și fără pas de build.
+
+### Ce am făcut
+- **`src/docuask/static/index.html`:** o pagină cu butoane pentru cheia API, **Upload**, lista documentelor cu **Delete**, **Ask**, **Show passages**
+  (căutarea singură, cu distanțe și scoruri) și cinci întrebări-exemplu pe care dai click.
+- **`GET /` în `main.py`:** servește pagina, cu antete de securitate.
+- **Un test nou** în `tests/test_api.py` (în total **61 de teste**).
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| O singură pagină HTML + JavaScript, fără bibliotecă și fără build | Nimic de instalat și de întreținut; se vede ușor ce face |
+| Servită chiar de API (același origin) | Nu e nevoie de CORS și nu există un al doilea server de rulat |
+| Tot textul venit de la server se pune cu `textContent`, niciodată ca HTML | Un document cu etichete rău intenționate nu poate injecta cod în pagină |
+| `Content-Security-Policy` (`default-src 'none'`, `connect-src 'self'`, `frame-ancestors 'none'`), `nosniff`, `Referrer-Policy` | Chiar dacă ar apărea o breșă, pagina nu poate vorbi cu alt site și nu poate fi încadrată în alt site |
+| Cheia API în `sessionStorage`, nu în `localStorage` | Dispare când închizi tab-ul; nu rămâne pe disc |
+| Test de gardă: `innerHTML` nu are voie să apară în pagină | Dacă cineva îl introduce, testul pică |
+| „Show passages” ca buton | Când un răspuns pare greșit, te uiți mai întâi la ce a găsit căutarea (același principiu ca `/v1/search`) |
+| Fără streaming în pagină | Rămâne simplă; endpoint-ul de streaming există pentru alți clienți |
+
+### Ce am verificat
+- **Într-un browser** (copie a proiectului, model fals, bază temporară): lista, întrebare cu răspuns, refuz, „Show passages”, întrebare prea scurtă,
+  cheie greșită, încărcare, ștergere, aspect pe ecran de 375 px fără derulare orizontală.
+- **Test de siguranță:** un document cu `<img onerror=...>` și `<script>` în nume și în text apare ca text inert în listă, în răspuns și în pasaje;
+  niciun element injectat, niciun cod executat.
+- **Imaginea Docker** conține pagina și o servește (`GET /` → 200, cu antetele).
+- **Pe laptopul meu:** pagina rulează; o frază care nu are legătură cu documentele (am scris în caseta de întrebare „pagina merge”) a fost
+  **refuzată de poartă** (`too_far`, distanța 1,000, 0 tokeni), exact comportamentul proiectat. `pytest`: 61 de teste, 91 %; `ruff` curat.
+
+**Neverificat:** răspunsuri cu modelul real în pagină; fereastra reală de alegere a fișierelor (am simulat selecția din cod); alte browsere;
+accesibilitate cu cititor de ecran; autentificare reală (cheia se tastează).
+
+### Capcane
+- **Butonul Delete șterge pe bune.** La o încercare am șters două documente din baza de dezvoltare (rămăseseră 3); se readuc prin reîncărcare
+  (butonul Upload sau `cli ingest sample-docs`). Confirmarea din browser nu e o plasă de siguranță.
+- **Cheia în pagină nu e un login:** oricine are cheia poate face orice poate face API-ul.
+- **Testul de gardă a picat din prima** pentru că un *comentariu* din pagină conținea cuvântul `innerHTML`; l-am reformulat. Un test care caută un șir
+  prinde și comentarii.
+- **Adăugarea de text cu un script într-un fișier cu sfârșituri de rând CRLF** poate amesteca LF și CRLF; `ruff format` o semnalează. Editorul tău păstrează
+  sfârșitul de rând al fișierului, deci nu apare în fluxul normal.
+
+### Cum o spun la interviu
+- „Am adăugat o pagină mică, un singur fișier fără framework, servită de API, ca să pot arăta proiectul. Tot ce vine de la server se afișează cu
+  `textContent`, am verificat cu un document care conține HTML rău intenționat, iar pagina are o Content-Security-Policy strictă. Am și un test care
+  pică dacă apare `innerHTML` în ea.”
+- „Butonul «Show passages» arată ce a găsit căutarea, cu distanțe și scoruri, fără să apeleze modelul: e primul loc unde mă uit când un răspuns pare greșit.”
+- „Limite pe care le știu: nu are login (cheia se tastează) și nu folosește streaming-ul.”
