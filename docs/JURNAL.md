@@ -351,3 +351,53 @@ Faza H); protecția împotriva prompt injection e de bază și nu a fost testat�
   model, ca să nu blochez conexiuni din pool.”
 - „Cu modelul fals, sistemul răspunde greșit la o întrebare fără legătură („capital of France”); știu asta și o măsor
   la evaluare, nu o ascund.”
+
+---
+
+## Interludiu — prima rulare cu model real, pe 3 întrebări (între Faza F și G) · 2026-10-17
+
+Ghidul face asta abia la Pasul 40; am făcut-o mai devreme, pe scurt, ca să am o comparație reală față de modelele false. Nu e
+evaluarea completă (aceea rămâne la pașii 40–41, pe cele 28 de întrebări).
+
+### Ce am făcut
+- Cheia OpenAI în `.env` (ignorat de git), `CHAT_MODEL=gpt-4o-mini`, embedding implicit `text-embedding-3-small` (1536).
+- O **bază separată**, `docuask_real`, cu schema aplicată prin Alembic și cele 5 documente reîncărcate cu embedding real.
+- Furnizorul real îl aleg **per terminal**, prin variabile de mediu (`LLM_PROVIDER=openai`, `DATABASE_URL=...docuask_real`);
+  în `.env` nu e `LLM_PROVIDER`, deci restul fazelor rămân deterministe și gratuite.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Bază separată pentru vectorii reali | `ingest` compară hash-ul și ar fi spus `unchanged` pe aceleași fișiere; întrebările reale s-ar fi căutat printre vectori falși |
+| Cheia doar în `.env`; furnizorul ales per sesiune de terminal | Cheia nu ajunge în cod, comenzi sau git; nu pot apela din greșeală un API plătit |
+| Verificarea cheii fără s-o afișez (doar valori booleene) și căutare în fișierele urmărite și în istoric | 0 potriviri cu un șir de forma `sk-...`; cheia nu a ieșit din `.env` |
+
+### Rezultate reale
+| Întrebare | `best_distance` fals → real | tokeni (intrare/ieșire) fals → real | rezultat cu modelul real |
+|---|---|---|---|
+| „How many vacation days do I get each year?” | 0.756 → **0.514** | 500/47 → 574/29 | răspuns corect, citare *Annual leave* |
+| „How long is paternity leave for fathers?” | 0.563 → **0.298** | 524/46 → 578/38 | răspuns corect, citare *Parental leave* |
+| „What is the capital of France?” (fără răspuns în documente) | 0.914 → **0.798** | 483/34 → 559/11 | **refuz** `not_covered` (modelul fals răspundea greșit) |
+
+- **Vectori:** în `docuask` (fals) un vector are 32 de componente nenule din 1536; în `docuask_real`, 1536 din 1536 (dens).
+- **Separare:** cu embedding real, întrebările cu răspuns au distanțe 0.30–0.51, cea fără răspuns 0.80; cu cel fals,
+  0.56–0.76 față de 0.91. Marja e mai mare cu embedding real (aprox. 0.28 față de 0.16), dar pe doar trei întrebări.
+- **Pragul 0.95 e prea larg:** întrebarea fără răspuns (0.80) a trecut de poarta 1, iar refuzul l-a făcut modelul (poarta 2),
+  după ce a consumat 559 de tokeni de intrare. Un prag între ~0.5 și ~0.8 ar fi refuzat-o gratis la poarta 1. **Nu l-am
+  schimbat:** îl calibrez la Pasul 41, pe setul întreg.
+- Răspunsurile modelului real sunt mai scurte și mai precise (o propoziție) decât extracția modelului fals.
+- Ieșirea structurată (`json_schema`, implicit în `langchain-openai` 1.7.2) a mers cu `gpt-4o-mini`: `covered` și `source_ids`
+  au fost parsate, iar citările au trecut verificarea.
+
+### Neverificat încă
+Cifrele pe setul de 28 de întrebări (hit@k, MRR, distanțe) cu embedding real; latențele (nu le-am măsurat); costul în bani
+(am văzut doar tokeni); `stream()` cu model real; comportamentul sub încărcare.
+
+### Cum o spun la interviu
+- „Am rulat DocuAsk cu OpenAI (`text-embedding-3-small` și `gpt-4o-mini`) schimbând doar variabile de mediu: clienții se
+  construiesc într-o singură fabrică. Pe trei întrebări, embedding-ul real a dat distanțe mai mici la întrebările cu
+  răspuns și a separat mai bine întrebarea fără răspuns; evaluarea completă o fac pe un set de 28 de întrebări.”
+- „Pragul de distanță implicit era prea larg pentru embedding-ul real: refuzul l-a făcut modelul, nu poarta de distanță,
+  deci am plătit tokeni. De aceea îl calibrez pe date, nu îl ghicesc.”
+- „Am folosit o bază separată pentru vectorii reali, fiindcă ingestia idempotentă ar fi sărit peste re-embedding și aș fi
+  amestecat vectori falși cu reali.”
