@@ -164,3 +164,64 @@ doar construiți corect. `with_structured_output` al modelului fals nu poate fi 
   mediu, iar o setare lipsă oprește procesul la pornire.”
 - „Modelul fals e lexical și intenționat slab: nu pretind că măsoară calitatea unui model real. Calitatea o măsor separat,
   cu un set de întrebări cu răspuns cunoscut, și cu embedding real când am cheie.”
+
+---
+
+## Faza D — Ingestia documentelor (pașii 11–14) · 2026-10-17
+
+### Ce am făcut
+- **Pas 11 — `chunking.py`.** Citire `.md` / `.txt` / `.pdf`, tăiere întâi după structură (titluri Markdown, pagini PDF),
+  apoi după mărime (800 de caractere, suprapunere 100). Fiecare bucată știe de unde vine (secțiune, pagină).
+- **Pas 12 — `ingest.py`.** Ingestie idempotentă: hash `sha256`, embedding în afara tranzacției, o tranzacție scurtă care
+  înlocuiește bucățile documentului.
+- **Pas 13 — documente de test.** Cinci fișiere în `sample-docs/` cu numere precise (25 de zile, 10 zile, 500 EUR).
+- **Pas 14 — `cli.py`.** `python -m docuask.cli ingest <folder>` (și `ask`, activ după Faza G).
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Tai întâi după structură, apoi după mărime | O bucată rareori amestecă două subiecte; păstrează secțiunea/pagina, de unde se fac citările |
+| `embed_text` = calea secțiunii + textul (doar pentru embedding) | „10 zile” nu spune nimic; „Sick leave > 10 zile” spune. Utilizatorul vede textul original |
+| Suprapunere de 100 de caractere | O idee tăiată la graniță nu dispare |
+| `_clean` scoate `\x00` | Postgres refuză caracterul NUL în coloane text; unele PDF-uri îl produc |
+| `utf-8-sig` la decodare | Ignoră BOM-ul pe care Windows îl adaugă uneori |
+| Excepții proprii (`UnsupportedDocument`, `EmptyDocument`, `IngestConflict`) | Stratul API le traduce în 415, 422 și 409 (Faza G) |
+| `sha256` + `UNIQUE(name)` | Reîncărcarea aceluiași fișier nu costă nimic; două încărcări simultane nu strică nimic |
+| **Embedding în afara tranzacției** | Apelul de rețea e lent; nu țin o conexiune și un lock cât aștept |
+| `SELECT ... FOR UPDATE` pe document + `IntegrityError` → `IngestConflict` | Actualizările aceluiași document se serializează; la o cursă pe un nume nou, constrângerea unică alege câștigătorul |
+| Verific lungimea vectorilor (1536) înainte de scriere | O dimensiune greșită oprește ingestia înainte de orice modificare în bază |
+| Dependențe (`sessions`, `embeddings`, `settings`) ca parametri | Testele pot da un embedding fals și o bază de test |
+| `cli.py`: importul `docuask.api` în interiorul `cmd_ask` | Vezi „Capcane”: ghidul avea o greșeală de ordine |
+
+### Ce am verificat (rezultate reale)
+- Chunking pe un `.md` mic: două bucăți, `'Leave Policy > Sick leave'` și `'Leave Policy > Annual leave'`, cu `embed_text`
+  = secțiune + `\n` + text
+- Fișier `.docx` → `UnsupportedDocument: Unsupported file type '.docx'. Use .md, .txt or .pdf`
+- Text lung cu `size=120, overlap=30` → 4 bucăți, niciuna peste 120 de caractere
+- Ingestie, prima rulare: 5 × `created`, fiecare `(5 chunks)`; a doua rulare: 5 × `unchanged` (idempotență confirmată)
+- În bază: `documents` = 5, `chunks` = **25**; coloana `section` conține căi de tipul
+  `Information Security > Passwords and accounts`
+- `ruff check` și `ruff format --check` curate
+- `python -m docuask.cli ask "x"` → `ModuleNotFoundError: No module named 'docuask.api'` (așteptat până la Faza G)
+
+**Neverificat încă:** ingestia sub concurență (testul din Pasul 26, Faza H); citirea unui PDF real (`_load_pdf` nu a
+rulat pe niciun fișier; testul din Faza H generează un PDF cu `fpdf2`); embedding real (acum e cel fals).
+
+### Capcane
+- **Greșeală de ordine în ghid.** `cli.py` din PDF începe cu `from docuask.api import get_rag_service`, dar `api.py` apare
+  abia în Faza G; urmând ghidul exact, comanda de ingestie pică cu `ModuleNotFoundError`. Remediu: importul se mută în
+  `cmd_ask`. Am verificat varianta într-o bază temporară înainte de a o folosi. Bonus de design: `ingest` nu încarcă
+  stratul web.
+- **800 de caractere nu e „corect”**, e un punct de pornire; îl aleg măsurând (Faza I).
+- **PDF scanat** (doar imagini) → `EmptyDocument`: ar fi nevoie de OCR.
+- **Embedding în interiorul tranzacției** ar ține o conexiune și un lock cât durează apelul către API; cu zece încărcări
+  simultane se epuizează pool-ul.
+
+### Cum o spun la interviu
+- „Tai documentele întâi după structură, apoi după mărime, și păstrez secțiunea sau pagina pentru fiecare bucată: de
+  acolo vin citările. La embedding pun titlul secțiunii în fața textului, ca vectorul să știe despre ce e bucata.”
+- „Ingestia e idempotentă: hash de conținut, deci o reîncărcare nu costă nimic, și o constrângere unică în bază care
+  decide câștigătorul când două cereri creează același document.”
+- „Apelul de embedding se face în afara tranzacției: nu țin o conexiune și un lock pe rând cât aștept un API extern.”
+- „Dimensiunea bucății (800) e un punct de pornire, nu o valoare demonstrată; o aleg măsurând, cu un set de
+  întrebări cu răspuns cunoscut.”
