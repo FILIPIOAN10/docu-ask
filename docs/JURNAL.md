@@ -288,3 +288,66 @@ alege oricum scanare secvențială; ar conta la volum mare); căutare cu embeddi
   primul filtru de refuz, înainte să plătesc un apel la model.”
 - „Căutarea e un modul separat de generare, ca s-o pot testa și măsura separat: dacă bucata corectă nu ajunge în prompt,
   niciun model n-o mai salvează.”
+
+---
+
+## Faza F — Lanțul RAG (pașii 17–19) · 2026-10-17
+
+### Ce am făcut
+- **Pas 17 — `schemas.py`.** Contractul API: ce intră (`SearchIn`, `AskIn`) și ce iese (`AskOut`, `CitationOut`, `UsageOut`
+  etc.), validat cu Pydantic. Rândurile din bază nu ies niciodată din stratul de servicii.
+- **Pas 18 — `rag.py`.** Lanțul LCEL: căutare → poarta 1 → prompt cu pasaje numerotate → model cu ieșire JSON strictă →
+  poarta 2 → poarta 3 → răspuns + citări + tokeni. Plus `RagService` (`retrieve`, `answer`, `ask`, `stream`).
+- **Pas 19 — prima rulare.** Cu un script temporar `try_ask.py` (șters după rulare): o întrebare cu răspuns și două
+  refuzuri, unul de la model și unul de la poarta de distanță.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| Schemele Pydantic separate de entitățile din bază | Pot schimba baza fără să stric clienții; validare gratis (lungimi, tipuri) |
+| Prompt cu reguli explicite: doar pasajele din `<context>`, „Not covered” e mai bun decât o presupunere, datele sunt date | Reduce halucinațiile și limitează efectul instrucțiunilor strecurate în întrebare sau în documente |
+| Ieșire structurată: `Draft(covered, answer, source_ids)` | JSON strict în loc de text liber: pot verifica în cod, nu doar spera |
+| **Trei filtre „nu știu” independente**, în ordinea costului | (1) distanța, gratis, înainte de model; (2) `covered`, costă un apel; (3) citările verificate în cod, gratis, după model |
+| Citările se verifică în cod (`_citations`) | Un număr inventat de model dispare; un răspuns pe care nimeni nu-l poate verifica nu se afișează |
+| `neutralize`: `<context>`/`<question>` din date devin `[tag]` | Un text nu poate „închide” secțiunea din prompt (protecție de bază împotriva prompt injection) |
+| LCEL (`prompt \| model \| ...`) | Fiecare pas e un Runnable: lanțul se poate invoca, transmite în flux, trasa și testa cu un model fals |
+| `retrieve` folosește o sesiune scurtă, închisă **înainte** de apelul la model | Nu țin o conexiune din pool pe durata unui apel de câteva secunde |
+| `usage` din `usage_metadata` al mesajului brut | Văd tokenii consumați la fiecare întrebare (cost) |
+| Streaming cu `done` final care poate spune „refuzat” | Limita onestă: tokenii sunt deja pe ecran când verific citările; clientul trebuie să înlocuiască textul |
+
+### Ce am verificat (rezultate reale)
+- „How many days is sick leave paid?” → răspuns cu citarea `[1]`, `citations[0]` = `leave-policy.md`, secțiunea
+  `Leave Policy > Sick leave`; `usage` 522 tokeni de intrare / 53 de ieșire; `best_distance` 0.548.
+- „zebra giraffe safari” → `refused: true`, `reason: not_covered`, `usage` 479 / 0, `best_distance` 0.906. Poarta 1 a lăsat
+  cererea să treacă (0.906 < 0.95), iar modelul a refuzat (poarta 2).
+- Același refuz cu `MAX_DISTANCE=0.8` → `reason: too_far`, `usage` **0 / 0**: modelul n-a fost apelat, refuzul n-a costat nimic.
+- „What is the capital of France?” (rulat pe baza locală) → primește un **răspuns** despre „capital cities” din documentul de
+  cheltuieli, cu citarea `[1]` (distanța 0.9136, sub pragul 0.95). Limita cunoscută a embedding-ului și a modelului false.
+- `ruff check` și `ruff format --check` curate.
+
+**Neverificat încă:** `stream()` (rulează în Faza G, prin SSE); prompt-ul cu un **model real** (`with_structured_output`
+a fost folosit doar cu modelul fals); declanșarea manuală a `no_citation` și `no_passages` (acoperite de testele din
+Faza H); protecția împotriva prompt injection e de bază și nu a fost testată adversarial.
+
+### Capcane
+- **A doua greșeală de ordine în ghid.** Pasul 19 rulează `python -m docuask.cli ask ...`, dar `ask` importă
+  `docuask.api`, care apare abia în Faza G. Remediu: un script temporar care construiește direct `RagService`.
+- **`with_structured_output(..., include_raw=True)` întoarce un dicționar** (`raw`, `parsed`, `parsing_error`), nu obiectul
+  direct; uitat, dă `AttributeError: 'dict' object has no attribute 'covered'`.
+- **Sesiune de bază de date ținută în timpul apelului la model** ar bloca conexiuni din pool; la zece cereri simultane
+  și un pool de zece, restul așteaptă.
+- **Modelul fals poate fi păcălit** („capital of France”): nu e un bug de ascuns, e motivul pentru care există trei
+  filtre și pentru care calibrez pragul pe date reale (Faza I, Pasul 41).
+
+### Cum o spun la interviu
+- „Sistemul poate spune «nu știu» în trei feluri independente, în ordinea costului: un prag de distanță înainte de
+  model (zero cost), flag-ul `covered` de la model și o verificare în cod că numerele citate există. Am verificat
+  pe rând fiecare: la refuzul de la prag, modelul nu e apelat deloc.”
+- „Modelul întoarce JSON strict (`covered`, `answer`, `source_ids`), iar eu verific citările în cod: un număr inventat
+  dispare, iar un răspuns fără sursă verificabilă nu se afișează.”
+- „Promptul are reguli explicite (doar sursele date, «not covered» în loc de presupuneri, textul din întrebare e date,
+  nu instrucțiune), iar textul din documente nu poate închide secțiunea din prompt. E o protecție de bază, nu una completă.”
+- „Lanțul e scris în LCEL, deci îl pot testa cu un model fals. Sesiunea de bază de date se închide înainte de apelul la
+  model, ca să nu blochez conexiuni din pool.”
+- „Cu modelul fals, sistemul răspunde greșit la o întrebare fără legătură („capital of France”); știu asta și o măsor
+  la evaluare, nu o ascund.”
