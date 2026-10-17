@@ -607,3 +607,65 @@ se evaluează doar căutarea, nu calitatea răspunsurilor generate și nici refu
   0,702), deci avem trei filtre, nu unul. Pragul îl calibrez pe date, nu îl ghicesc.”
 - „Când am vrut să văd efectul dimensiunii bucății, am observat că ingestia idempotentă ignoră re-rularea cu altă setare;
   am folosit o bază separată pentru experiment.”
+
+---
+
+## Faza J — Docker (pașii 35–37) · 2026-10-17
+
+### Ce am făcut
+- **Pas 35 — `Dockerfile`.** Imagine multi-stage, non-root, cu `HEALTHCHECK`.
+- **Pas 36 — `docker-compose.yml`.** Trei servicii: `db` (Postgres cu pgvector), `migrate` (job unic) și `api`.
+- **Pas 37 — rularea.** `docker compose up -d --build`, încărcarea documentelor și o întrebare prin `curl`, pe containere.
+
+### Decizii și de ce
+| Decizie | De ce |
+|---|---|
+| **Multi-stage**: `uv` și uneltele de build rămân în prima etapă | Imaginea finală e mică (295 MB) și are mai puțin de atacat |
+| Versiunea `uv` fixată (`ghcr.io/astral-sh/uv:0.12`) și `uv sync --frozen` | Construcție repetabilă: se instalează exact `uv.lock`, iar o nepotrivire cu `pyproject.toml` oprește build-ul |
+| Dependențele **înaintea codului** (două `uv sync`) | Stratul de dependențe se reface doar când se schimbă `pyproject.toml`/`uv.lock`; o rebuild cu cache a durat ~18 s, față de ~2,5 min prima dată |
+| **Non-root**, UID numeric 10001 | Un proces compromis nu poate scrie în imagine; UID-ul numeric poate fi verificat de Kubernetes (`runAsNonRoot`) |
+| `HEALTHCHECK` cu Python, pe `/health/live` | Imaginea `slim` nu are `curl`; liveness nu atinge baza |
+| `CMD` în formă exec | uvicorn e PID 1 și primește `SIGTERM` direct, deci se oprește frumos |
+| `.dockerignore` (fără `.venv`, `.env`, `tests`, `eval`, `sample-docs`, `.git`) | Imaginea nu conține secrete și nici fișiere de dezvoltare |
+| `migrate` ca **serviciu separat**, one-shot, iar `api` pornește la `service_completed_successfully` | Dacă migrarea pică, API-ul nu pornește; același tipar ca un Job în Kubernetes; o replică nouă de API nu rulează migrări |
+| `db` cu `healthcheck` (`pg_isready`) și `migrate` pornit după `service_healthy` | Nicio migrare pe o bază care încă nu e gata |
+| `DATABASE_URL` cu gazda `db` în `environment` (are prioritate față de `env_file`) | În rețeaua Compose, serviciile se găsesc după nume, iar `.env` nu poate muta API-ul pe altă bază |
+| Volum numit `pgdata` | Datele bazei supraviețuiesc unui `docker compose down`; dispar doar cu `-v` |
+| `docker stop docuask-db`, **nu** `docker rm -f` | Containerul de dezvoltare n-are volum și conține și `docuask_real` (vectori reali); `rm` ar fi șters datele |
+
+### Ce am verificat (rezultate reale)
+- `docker compose up -d --build` → `api` **healthy**, `db` **healthy**, `migrate` **Exited (0)**.
+- Încărcarea celor 5 documente prin `curl` → 5 × `created` (a doua rulare → `unchanged`, verificat de mine într-un proiect temporar).
+- „How much is the per diem for meals on a business trip?” → răspuns cu `per diem of 35 EUR`, citare
+  `expenses.md > Travel and Expenses > Daily allowance`, `usage` 476/54, `best_distance` 0,645.
+- `docker compose exec api id` → `uid=10001(app) gid=999(app) groups=999(app)`.
+- Imaginile `docuask-api` și `docuask-migrate`: **295 MB** fiecare (aceeași imagine, construită de două servicii).
+- Curățenie: `docker compose down -v` a șters containerele, rețeaua și volumul; `docuask-db` repornit, cu bazele `docuask` și
+  `docuask_real` intacte (25 de bucăți în fiecare).
+- Build-ul cu `uv.lock`-ul meu a trecut și într-un proiect Compose temporar, rulat de mine (prima construcție ~2 min 36 s).
+
+**Neverificat:** scanarea imaginii pentru vulnerabilități; sistem de fișiere `read-only`; limite de CPU/memorie; imaginea de bază
+fixată după digest; build multi-arhitectură; oprirea frumoasă la `SIGTERM` sub trafic; containerul rulat cu model real; build-ul
+în CI (Faza K).
+
+### Capcane
+- **Ghidul spune `docker rm -f docuask-db`** pentru a elibera portul 5434. Containerul din Pasul 5 n-are volum, deci `rm` șterge
+  toate datele din el. Am folosit `docker stop` (și `docker start` după).
+- **Porturile 5434 și 8000 trebuie libere:** containerul de dezvoltare și serverul `uvicorn` local le țin ocupate.
+- **`.env` intră în mediul containerului `api`** (`env_file`), deci și cheia OpenAI: nu e în imagine, dar `docker compose config` sau
+  `docker inspect` ar afișa-o. Providerul rămâne `fake`, deci nu se folosește.
+- **`docker compose ps` ascunde serviciile terminate**; `migrate` se vede doar cu `ps -a`.
+- **Bucla `for` din ghid e pentru bash**; în PowerShell am folosit `Get-ChildItem ... | ForEach-Object` cu `curl.exe`.
+- **`docker compose down -v` șterge volumul Compose** (`pgdata`); fără `-v`, datele rămân între porniri.
+
+### Cum o spun la interviu
+- „Imaginea e multi-stage: `uv` instalează dependențele din `uv.lock` (`--frozen`), iar imaginea finală copiază doar rezultatul.
+  Dependențele sunt într-un strat separat de cod, deci o modificare de cod reface o rebuild în câteva secunde. Rulează non-root, cu
+  UID numeric, are `HEALTHCHECK`, iar uvicorn pornește în formă exec ca să primească `SIGTERM`.”
+- „Migrarea e un serviciu separat, care rulează o dată și iese; API-ul pornește doar dacă migrarea a reușit. E același model ca un
+  Job de Kubernetes, nu o migrare făcută de aplicație la pornire.”
+- „Ce nu am făcut și știu că lipsește: sistem de fișiere read-only, limite de resurse, imagine de bază fixată după digest și
+  scanare de vulnerabilități. Scanarea o pun în CI.”
+
+### Rămâne pentru Faza K
+CI cu GitHub Actions: testele pe Postgres, `ruff`, poarta de evaluare (`--min-hit3`) și construirea imaginii.
