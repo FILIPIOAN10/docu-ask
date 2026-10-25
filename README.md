@@ -21,7 +21,8 @@ upload (.md/.txt/.pdf)                       ask
                                           citations validated -> answer + sources
 ```
 
-Stack: Python 3.12, FastAPI, LangChain, SQLAlchemy + Alembic, PostgreSQL 16 with pgvector, `uv`, Docker, GitHub Actions.
+Stack: Python 3.12, FastAPI, LangChain, SQLAlchemy + Alembic, PostgreSQL 16 with pgvector, FastMCP, `uv`, Docker,
+GitHub Actions.
 
 ## Run it (no API key needed)
 
@@ -72,6 +73,32 @@ uv run python -m docuask.evaluate       # retrieval quality on the golden set
 
 Auth: `X-API-Key` header, several keys allowed (rotation), constant-time comparison.
 
+## MCP server
+
+The same service is also an **MCP server**, so an AI client (Claude Desktop, Claude Code, VS Code, any agent) can
+discover it and call it on its own. REST is the door for programs, MCP the door for models; both call the same
+`RagService`, so an answer is identical whichever way it came in.
+
+| MCP | Name | What |
+|---|---|---|
+| tool | `ask_documents(question)` | grounded answer + citations, or `refused` with a `reason` (same JSON as `/v1/ask`) |
+| tool | `search_documents(query, k, mode)` | passages with scores, no model call (same JSON as `/v1/search`) |
+| resource | `docuask://documents` | the documents it can answer from |
+
+Both tools are marked read-only and idempotent, their arguments carry the same limits as the REST API (JSON Schema, checked
+before any code runs), and they return structured output. Unexpected errors are masked: the details stay in the logs.
+
+Two transports:
+
+```bash
+# stdio: the client starts the server as a process (no key: whoever can start it can read .env anyway)
+uv run docuask-mcp
+npx @modelcontextprotocol/inspector uv run docuask-mcp          # try it in the MCP Inspector
+
+# HTTP: mounted in the API at /mcp/ (with the trailing slash), same API keys, sent as a bearer token
+claude mcp add --transport http docuask http://localhost:8000/mcp/ --header "Authorization: Bearer dev-key"
+```
+
 ## Design decisions
 
 - **Hybrid retrieval.** Embeddings find meaning, Postgres full-text finds exact codes and numbers; Reciprocal Rank Fusion
@@ -115,17 +142,19 @@ CI fails the build if hybrid hit@3 drops below 90 %.
 
 ## Quality gates
 
-`ruff` (lint + format), `pytest` (61 tests, about 90 % coverage, floor 80 %), the retrieval quality gate above, and a
+`ruff` (lint + format), `pytest` (71 tests, about 90 % coverage, floor 80 %), the retrieval quality gate above, and a
 Docker image job (build, start, health check), all in GitHub Actions.
 
 ## What was verified, and what was not
 
 Verified: the full test suite on a real Postgres; CI green on GitHub Actions; the stack through `docker compose`
-(non-root image, about 295 MB); ingestion, a 28-question evaluation and several questions with `text-embedding-3-small`
+(non-root image, about 360 MB since FastMCP was added, 295 MB before); ingestion, a 28-question evaluation and several questions with `text-embedding-3-small`
 and `gpt-4o-mini`; the one-page UI in a browser (list, ask, refusal, passages, upload, delete, a phone-width layout and a
-document containing hostile HTML, which is shown as inert text).
+document containing hostile HTML, which is shown as inert text). The MCP server: in-memory and over real HTTP in the tests
+(401 without a valid key), and over stdio in the MCP Inspector (answer with a citation, refusal).
 
-Not verified: Azure OpenAI against a real endpoint (only the client construction and a protocol-level contract test);
+Not verified: the MCP server in Claude Desktop / Claude Code; Azure OpenAI against a real endpoint (only the client
+construction and a protocol-level contract test);
 latency or behaviour under load; real-world scanned or complex PDFs (the PDF test generates its own file); other
 languages; image vulnerability scanning.
 
@@ -137,6 +166,8 @@ languages; image vulnerability scanning.
 - The distance threshold was calibrated on the bundled documents and 28 questions; recalibrate for yours.
 - No per-tenant isolation yet: one set of documents, shared by every API key. A single static API key list instead of signed tokens.
 - The default API key is `dev-key`, a local convenience: set `API_KEYS` before exposing the service (nothing stops it from starting with the default).
+- MCP over HTTP accepts the static API keys as bearer tokens; a real deployment would put an OAuth / Entra ID token
+  verifier in front (one class to swap, the tools do not change). MCP has no upload or delete: it is read-only on purpose.
 - No tracing or metrics, only request-id logs.
 - The UI has no login (you type the API key) and does not use the streaming endpoint; "Delete" removes a document for real.
 

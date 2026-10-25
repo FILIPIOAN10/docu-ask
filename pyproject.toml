@@ -16,7 +16,10 @@ dependencies = [
     "langchain-openai>=1.0",
     "langchain-text-splitters>=1.0",
     "pypdf>=6.0",
+    "fastmcp>=4.1.3,<5",
 ]
+[project.scripts]
+docuask-mcp = "docuask.mcp_server:main"
 
 [dependency-groups]
 dev = [
