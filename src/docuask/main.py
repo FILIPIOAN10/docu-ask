@@ -11,8 +11,10 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
-from docuask.api import health, protected
+from docuask.api import get_rag_service, health, protected
 from docuask.config import get_settings
+from docuask.db import get_session_factory
+from docuask.mcp_server import ApiKeyVerifier, create_mcp_server
 from docuask.models import EMBEDDING_DIM
 from docuask.providers import get_chat_model, get_embeddings
 
@@ -31,6 +33,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 for _handler in logging.getLogger().handlers:
     _handler.addFilter(RequestIdFilter())
 log = logging.getLogger("docuask")
+# The MCP door, over HTTP. Same keys as /v1, read per request (rotation works the same way), sent as a bearer token.
+mcp_http = create_mcp_server(
+    get_rag_service, get_session_factory, auth=ApiKeyVerifier(lambda: get_settings().keys)
+).http_app(path="/")
 
 
 @asynccontextmanager
@@ -42,13 +48,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     get_embeddings()  # builds the clients, so a missing API key raises here
     get_chat_model()
     log.info("started provider=%s", settings.llm_provider)
-    yield
+    async with mcp_http.lifespan(app):
+        yield
 
 
 app = FastAPI(title="DocuAsk", version="0.1.0", lifespan=lifespan)
 app.include_router(protected)
 app.include_router(health)
-
+# Mounted under /mcp, so the endpoint is /mcp/ - WITH the trailing slash (/mcp answers 307 to it).
+app.mount("/mcp", mcp_http)
 STATIC = Path(__file__).parent / "static"
 # The page only talks to this same origin and renders every piece of text with textContent, never innerHTML.
 PAGE_HEADERS = {

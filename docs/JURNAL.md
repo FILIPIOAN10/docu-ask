@@ -868,3 +868,54 @@ Azure OpenAI pe un endpoint real; latențe și comportament sub încărcare; PDF
 
 ### Rămase opționale
 Tie-break după rangul vectorial în RRF (de implementat și remăsurat); rulare pe Azure; OCR.
+
+---
+
+## Extra 2 — server MCP (FastMCP) · 2026-10-25
+
+### De ce
+Serverele MCP peste un RAG sunt o cerință tot mai des întâlnită în rolurile de AI engineering. DocuAsk avea deja un RAG măsurat; îi lipsea ușa
+pentru agenți. MCP (Model Context Protocol) e protocolul prin care un client AI (Claude, Copilot, un agent) **descoperă** tool-urile unui
+server și le apelează singur: REST e pentru programe, MCP pentru modele.
+
+### Ce am făcut
+- `security.py`: regula de verificare a cheii scoasă în `key_is_valid`, folosită și de REST (`X-API-Key`) și de MCP (bearer token): o singură regulă,
+  nu două copii.
+- `mcp_server.py` (nou): `create_mcp_server(rag, sessions, auth)` cu două tool-uri, `ask_documents` și `search_documents`, și un resource,
+  `docuask://documents`. Tool-urile cheamă **același** `RagService` ca REST-ul. Sunt marcate read-only / idempotent, argumentele au limite (`Field`
+  devine JSON Schema), întorc output structurat, iar erorile neprevăzute sunt mascate (`mask_error_details`). `ApiKeyVerifier` acceptă cheile din
+  `API_KEYS` ca bearer token.
+- `pyproject.toml`: dependența `fastmcp>=4.1.3,<5` și comanda `docuask-mcp` (transportul stdio).
+- `main.py`: serverul MCP montat la `/mcp/`, cu lifespan-ul lui pornit în lifespan-ul aplicației.
+- `tests/test_mcp.py`: 10 teste: în memorie (descoperire, scheme, răspuns cu citări, refuz, search, validare, eroare mascată, resource), pe HTTP
+  real cu uvicorn într-un thread (cheie bună → răspuns, fără cheie sau cu cheie greșită → 401) și montarea din `main.py`.
+
+### Ce am verificat
+- `ruff check` + `ruff format --check` curate; **71 de teste** (61 + 10), acoperire **91 %**.
+- **MCP Inspector 2.12, stdio:** conectat (protocol `2025-11-25`), cele 2 tool-uri listate; o întrebare acoperită de `01-northwind-benefits.pdf`
+  (pensia) → `refused: false`, citare pagina 2, `best_distance` 0,64; o întrebare despre concediul medical, cu doar acel PDF în bază →
+  `not_covered`, corect.
+- Înainte, pe o copie de referință: drum stdio complet cu un client MCP real (răspuns, refuz, search, resource), HTTP pe aplicația reală
+  (cheie bună → răspuns, cheie greșită → 401), imagine Docker **361 MB** (de la 295 MB).
+
+### Neverificat
+Clienții Claude Desktop / Claude Code; HTTP în Inspector; modelul real (totul a rulat cu `LLM_PROVIDER=fake`); OAuth / Entra ID în loc de chei
+statice.
+
+### Capcane
+- **Fișierul pus în rădăcina repo-ului** (`mcp_server.py` lângă `pyproject.toml`) → `ModuleNotFoundError: docuask.mcp_server`. Pachetul e doar ce stă
+  în `src/docuask/`; mutat cu `git mv`.
+- **Importuri adăugate peste cele vechi** în `main.py` → ruff F811 (nume importat de două ori). Blocul se înlocuiește, nu se completează.
+- **URL-ul HTTP e `/mcp/` cu slash:** `POST /mcp` primește 307. Clientul FastMCP urmează redirect-ul; alți clienți s-ar putea să nu-l urmeze.
+- **Pe stdio, stdout e canalul protocolului:** un `print()` strică clientul; log-urile merg pe stderr.
+- **MCP SDK v2 a trecut câmpurile pe snake_case** (`read_only_hint`, `input_schema`); variantele camelCase merg încă, dar cu avertismente.
+- Un resource care întoarce modele Pydantic pică („not JSON serializable”): îl serializăm noi, cu `TypeAdapter(...).dump_json`.
+- Conectarea stdio durează ~8 s prima dată (`uv run` + importurile LangChain); apelurile de după sunt rapide.
+
+### Cum o spun la interviu
+- „DocuAsk are două uși către același serviciu: REST pentru programe și MCP pentru agenți. Claude sau Copilot descoperă singuri `ask_documents` și
+  `search_documents` și le apelează; răspunsul e identic, cu aceleași citări și aceleași refuzuri.”
+- „Tool-urile sunt read-only, cu argumente validate prin JSON Schema, cu erorile mascate și cu aceleași chei ca API-ul, trimise ca bearer token. Pentru
+  producție aș înlocui verificatorul de chei cu Entra ID, fără să ating tool-urile.”
+- „Tool-urile sunt sincrone, pentru că stratul de servicii e sincron, iar FastMCP le rulează într-un thread, deci un apel lent la model nu blochează
+  event loop-ul.”
